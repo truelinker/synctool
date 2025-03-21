@@ -1157,26 +1157,6 @@ class FolderSync:
                 local_path = local_info['path']
                 remote_path = remote_dir + rel_path.replace('\\', '/')
                 
-                # Log detailed information about why the file needs to be synced if verbose logging is enabled
-                if verbose_logging:
-                    if rel_path not in remote_files:
-                        self.log(f"File needs sync: {rel_path} (new file, does not exist on remote)")
-                    else:
-                        remote_info = remote_files.get(rel_path)
-                        if content_only_compare:
-                            if local_info.get('hash') != remote_info.get('hash'):
-                                self.log(f"File needs sync: {rel_path} (content differs)")
-                        else:
-                            size_diff = abs(local_info['size'] - remote_info['size']) >= 10
-                            time_diff = abs(local_info['mtime'] - remote_info['mtime']) >= 5
-                            
-                            if size_diff and time_diff:
-                                self.log(f"File needs sync: {rel_path} (size and modification time differ)")
-                            elif size_diff:
-                                self.log(f"File needs sync: {rel_path} (size differs: local={local_info['size']}, remote={remote_info['size']})")
-                            elif time_diff:
-                                self.log(f"File needs sync: {rel_path} (modification time differs: local={local_info['mtime']}, remote={remote_info['mtime']})")
-                
                 # Ensure the remote directory exists
                 remote_dir_path = os.path.dirname(remote_path)
                 try:
@@ -1214,12 +1194,48 @@ class FolderSync:
                             errors += 1
                         else:
                             synced_files += 1
+                            # Log detailed information about synced file if verbose logging is enabled
+                            if verbose_logging:
+                                if rel_path not in remote_files:
+                                    self.log(f"File synced: {rel_path} (new file, did not exist on remote)")
+                                else:
+                                    remote_info = remote_files.get(rel_path)
+                                    if content_only_compare:
+                                        self.log(f"File synced: {rel_path} (content was different)")
+                                    else:
+                                        size_diff = abs(local_info['size'] - remote_info['size']) >= 10
+                                        time_diff = abs(local_info['mtime'] - remote_info['mtime']) >= 5
+                                        
+                                        if size_diff and time_diff:
+                                            self.log(f"File synced: {rel_path} (size and modification time were different)")
+                                        elif size_diff:
+                                            self.log(f"File synced: {rel_path} (size was different: local={local_info['size']}, remote={remote_info['size']})")
+                                        elif time_diff:
+                                            self.log(f"File synced: {rel_path} (modification time was different: local={local_info['mtime']}, remote={remote_info['mtime']})")
                     else:
                         # Use SFTP for file transfer
                         self.log(f"Copying (SFTP): {local_path} -> {remote_path}")
                         try:
                             sftp_client.put(local_path, remote_path)
                             synced_files += 1
+                            # Log detailed information about synced file if verbose logging is enabled
+                            if verbose_logging:
+                                if rel_path not in remote_files:
+                                    self.log(f"File synced: {rel_path} (new file, did not exist on remote)")
+                                else:
+                                    remote_info = remote_files.get(rel_path)
+                                    if content_only_compare:
+                                        self.log(f"File synced: {rel_path} (content was different)")
+                                    else:
+                                        size_diff = abs(local_info['size'] - remote_info['size']) >= 10
+                                        time_diff = abs(local_info['mtime'] - remote_info['mtime']) >= 5
+                                        
+                                        if size_diff and time_diff:
+                                            self.log(f"File synced: {rel_path} (size and modification time were different)")
+                                        elif size_diff:
+                                            self.log(f"File synced: {rel_path} (size was different: local={local_info['size']}, remote={remote_info['size']})")
+                                        elif time_diff:
+                                            self.log(f"File synced: {rel_path} (modification time was different: local={local_info['mtime']}, remote={remote_info['mtime']})")
                         except Exception as e:
                             self.log(f"SFTP transfer failed for {local_path}: {str(e)}")
                             errors += 1
@@ -1245,27 +1261,6 @@ class FolderSync:
         if stop_check and stop_check():
             self.log("Sync stopped by user before starting remote to local sync")
             return synced_files, errors
-        
-        # Print some debug info for specific files - we're examining all .c files
-        self.log(f"DEBUG: Looking for .c files in remote directories...")
-        for rel_path, info in remote_files.items():
-            # Check periodically for stop requests during debug logging
-            if stop_check and stop_check():
-                self.log("Sync stopped by user during debug logging")
-                return synced_files, errors
-                
-            if rel_path.endswith('.c'):
-                self.log(f"DEBUG: Found {rel_path} in remote files")
-                if rel_path in local_files:
-                    local_info = local_files[rel_path]
-                    remote_info = info
-                    size_diff = local_info['size'] != remote_info['size']
-                    time_diff = abs(local_info['mtime'] - remote_info['mtime']) >= 1
-                    self.log(f"DEBUG: {rel_path} - Size same: {not size_diff}, Time same: {not time_diff}")
-                    self.log(f"DEBUG: {rel_path} - Local size: {local_info['size']}, Remote size: {remote_info['size']}")
-                    self.log(f"DEBUG: {rel_path} - Local mtime: {local_info['mtime']}, Remote mtime: {remote_info['mtime']}")
-                    differ = self._files_differ(remote_info, local_info, content_only_compare)
-                    self.log(f"DEBUG: {rel_path} - Files differ according to logic: {differ}")
         
         # Ensure paths end with separator
         if not local_dir.endswith(os.path.sep):
@@ -1313,36 +1308,6 @@ class FolderSync:
         self.log(f"Found {total_to_sync} files to sync from remote to local")
         files_processed = 0
         
-        # Debug: print details of remote files not found locally
-        remote_only = [path for path in remote_files if path not in local_files]
-        if remote_only:
-            self.log(f"DEBUG: {len(remote_only)} files exist on remote but not locally")
-            for path in remote_only[:5]:  # Show first 5
-                self.log(f"DEBUG: Remote-only file: {path}")
-        
-        # Debug: print details of files that differ
-        differing_files = []
-        count = 0
-        for rel_path in remote_files:
-            # Check periodically for stop requests
-            count += 1
-            if count % 50 == 0 and stop_check and stop_check():
-                self.log("Sync stopped by user during file difference debugging")
-                return synced_files, errors
-                
-            if rel_path in local_files:
-                if self._files_differ(remote_files[rel_path], local_files[rel_path], content_only_compare):
-                    differing_files.append(rel_path)
-        
-        if differing_files:
-            self.log(f"DEBUG: {len(differing_files)} files exist on both sides but differ")
-            for path in differing_files[:5]:  # Show first 5
-                self.log(f"DEBUG: File differs: {path}")
-                remote_info = remote_files[path]
-                local_info = local_files[path]
-                self.log(f"  - Remote size: {remote_info['size']}, Local size: {local_info['size']}")
-                self.log(f"  - Remote mtime: {remote_info['mtime']}, Local mtime: {local_info['mtime']}")
-        
         # Go through each remote file
         for rel_path, remote_info in remote_files.items():
             if stop_check and stop_check():
@@ -1356,58 +1321,42 @@ class FolderSync:
                 remote_path = remote_info['path']
                 local_path = os.path.join(local_dir, rel_path)
                 
-                # Log detailed information about why the file needs to be synced if verbose logging is enabled
-                if verbose_logging:
-                    if force_sync and rel_path in local_files:
-                        self.log(f"File will be synced (force mode): {rel_path}")
-                    elif rel_path not in local_files:
-                        self.log(f"File needs sync: {rel_path} (new file, does not exist locally)")
-                    else:
-                        local_info = local_files.get(rel_path)
-                        if content_only_compare:
-                            if remote_info.get('hash') != local_info.get('hash'):
-                                self.log(f"File needs sync: {rel_path} (content differs)")
-                        else:
-                            size_diff = abs(remote_info['size'] - local_info['size']) >= 1
-                            time_diff = abs(remote_info['mtime'] - local_info['mtime']) >= 1
-                            
-                            if size_diff and time_diff:
-                                self.log(f"File needs sync: {rel_path} (size and modification time differ)")
-                            elif size_diff:
-                                self.log(f"File needs sync: {rel_path} (size differs: remote={remote_info['size']}, local={local_info['size']})")
-                            elif time_diff:
-                                self.log(f"File needs sync: {rel_path} (modification time differs: remote={remote_info['mtime']}, local={local_info['mtime']})")
-                
                 # Ensure the local directory exists
                 local_dir_path = os.path.dirname(local_path)
                 try:
                     os.makedirs(local_dir_path, exist_ok=True)
                     
-                    # Transfer the file based on selected method
-                    if transfer_method == "scp":
-                        # Use SCP for file transfer
-                        self.log(f"Copying (SCP): {remote_path} -> {local_path}")
+                    # Use SFTP for file transfer (SCP not needed for download)
+                    self.log(f"Copying: {remote_path} -> {local_path}")
+                    
+                    try:
+                        sftp_client.get(remote_path, local_path)
+                        synced_files += 1
                         
-                        # Since paramiko doesn't have direct SCP for download, we'll use SFTP to download
-                        # or alternatively we could execute scp command on the remote side
-                        try:
-                            # For downloading, we'll use SFTP anyway as it's more reliable than
-                            # trying to execute scp on the remote side with proper escaping
-                            sftp_client.get(remote_path, local_path)
-                            synced_files += 1
-                        except Exception as e:
-                            self.log(f"SCP transfer failed for {remote_path}: {str(e)}")
-                            errors += 1
-                    else:
-                        # Use SFTP for file transfer
-                        self.log(f"Copying (SFTP): {remote_path} -> {local_path}")
-                        try:
-                            sftp_client.get(remote_path, local_path)
-                            synced_files += 1
-                        except Exception as e:
-                            self.log(f"SFTP transfer failed for {remote_path}: {str(e)}")
-                            errors += 1
-                
+                        # Log detailed information about synced file if verbose logging is enabled
+                        if verbose_logging:
+                            if force_sync and rel_path in local_files:
+                                self.log(f"File synced: {rel_path} (force sync mode)")
+                            elif rel_path not in local_files:
+                                self.log(f"File synced: {rel_path} (new file, did not exist locally)")
+                            else:
+                                local_info = local_files.get(rel_path)
+                                if content_only_compare:
+                                    self.log(f"File synced: {rel_path} (content was different)")
+                                else:
+                                    size_diff = abs(remote_info['size'] - local_info['size']) >= 1
+                                    time_diff = abs(remote_info['mtime'] - local_info['mtime']) >= 1
+                                    
+                                    if size_diff and time_diff:
+                                        self.log(f"File synced: {rel_path} (size and modification time were different)")
+                                    elif size_diff:
+                                        self.log(f"File synced: {rel_path} (size was different: remote={remote_info['size']}, local={local_info['size']})")
+                                    elif time_diff:
+                                        self.log(f"File synced: {rel_path} (modification time was different: remote={remote_info['mtime']}, local={local_info['mtime']})")
+                    except Exception as e:
+                        self.log(f"SFTP transfer failed for {remote_path}: {str(e)}")
+                        errors += 1
+                        
                 except Exception as e:
                     self.log(f"Error syncing {remote_path}: {str(e)}")
                     errors += 1
