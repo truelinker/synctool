@@ -418,6 +418,11 @@ class FolderSyncApp:
             self.ssh_client = client
             self.sftp_client = client.open_sftp()
             
+            # Add after creating the SSH client
+            transport = self.ssh_client.get_transport()
+            if transport:
+                transport.set_keepalive(60)  # Send keepalive packet every 60 seconds
+            
             # Update UI on success
             self.root.after(0, self._on_ssh_connected)
             
