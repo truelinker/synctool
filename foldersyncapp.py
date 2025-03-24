@@ -1261,6 +1261,35 @@ class FolderSyncApp:
             folder_sync.local_cache_file = local_cache
             folder_sync.remote_cache_file = remote_cache
 
+            # Fix the extension filter format for better compatibility
+            fixed_extension_filter = []
+            if extension_filter:
+                for ext in extension_filter:
+                    if ext.startswith('.'):
+                        # Convert .c to *.c for better pattern matching
+                        fixed_extension_filter.append(f"*{ext}")
+                    else:
+                        fixed_extension_filter.append(ext)
+                self.log_message(f"Using extension filters: {', '.join(fixed_extension_filter)}")
+            
+            # Fix folder exclusions - split space-separated items into individual exclusions
+            fixed_folder_exclusions = []
+            if folder_exclusions:
+                for item in folder_exclusions:
+                    # Check if the item contains spaces and might need splitting
+                    if ' ' in item and not item.startswith('"') and not item.startswith("'"):
+                        # Split the item by spaces and add each part
+                        split_items = item.split()
+                        fixed_folder_exclusions.extend(split_items)
+                        self.log_message(f"Split exclusion '{item}' into {len(split_items)} individual items")
+                    else:
+                        fixed_folder_exclusions.append(item)
+                
+                self.log_message(f"Using folder exclusions: {', '.join(fixed_folder_exclusions)}")
+
+            # Test the SSH connection before starting
+            self._check_ssh_connection(folder_sync)
+
             # Scan local files
             self.status_var.set("Scanning local files...")
             self.log_message("Scanning local files and calculating hashes...")
@@ -1271,9 +1300,9 @@ class FolderSyncApp:
             
             local_files = folder_sync.list_local_files(
                 local_dir, 
-                extension_filters=extension_filter,
+                extension_filters=fixed_extension_filter,
                 filter_mode=filter_mode,
-                folder_exclusions=folder_exclusions,
+                folder_exclusions=fixed_folder_exclusions,
                 calculate_hashes=True,
                 stop_check=lambda: self.stop_requested
             )
@@ -1286,7 +1315,7 @@ class FolderSyncApp:
                 self._reset_ui_after_sync()
                 return
 
-            local_file_count = len(local_files)
+            local_file_count = len(local_files) if local_files else 0
             self.log_message(f"Found {local_file_count} files in local directory")
             self.log_message(f"Local processing took {local_duration:.1f} seconds")
             
@@ -1294,6 +1323,9 @@ class FolderSyncApp:
             self.log_message("Saving local metadata...")
             folder_sync.save_local_metadata(folder_sync.local_metadata)
             self.log_message("Local metadata saved successfully")
+
+            # Check SSH connection again before starting remote scan
+            self._check_ssh_connection(folder_sync)
 
             # Scan remote files
             self.status_var.set("Scanning remote files...")
@@ -1303,41 +1335,25 @@ class FolderSyncApp:
 
             # Start time tracking for performance reporting
             remote_start_time = time.time()
-            
-            # Check if SSH connection is still valid
-            try:
-                # Try a simple command to test connection
-                self.ssh_client.exec_command("echo test", timeout=5)
-            except Exception as e:
-                self.log_message(f"SSH connection error, attempting to reconnect: {str(e)}")
-                try:
-                    # Reconnect if needed
-                    self.ssh_client.close()
-                    self.sftp_client.close()
-                    self.ssh_client = paramiko.SSHClient()
-                    self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                    self.ssh_client.connect(
-                        hostname=self.host_var.get(),
-                        port=int(self.port_var.get()),
-                        username=self.username_var.get(),
-                        password=self.password_var.get()
-                    )
-                    self.sftp_client = self.ssh_client.open_sftp()
-                    folder_sync.ssh = self.ssh_client
-                    folder_sync.sftp = self.sftp_client
-                    self.log_message("SSH connection re-established successfully")
-                except Exception as reconnect_error:
-                    self.log_message(f"Failed to reconnect: {str(reconnect_error)}")
-                    self.status_var.set("Cache generation failed - connection error")
-                    self._reset_ui_after_sync()
-                    return
 
             # Create a watchdog to detect if the process appears stuck
             last_activity_time = time.time()
             
             def activity_watchdog():
                 nonlocal last_activity_time
-                if not self.stop_requested and time.time() - last_activity_time > 120:  # 2 minutes with no updates
+                current_time = time.time()
+                elapsed = current_time - last_activity_time
+                
+                # Check SSH connection if no activity for 30+ seconds
+                if elapsed > 30 and not self.stop_requested:
+                    self.log_message("No activity detected for 30+ seconds, checking SSH connection...")
+                    try:
+                        self._check_ssh_connection(folder_sync)
+                        last_activity_time = current_time  # Reset the timer after successful check
+                    except Exception as e:
+                        self.log_message(f"Error checking SSH connection: {str(e)}")
+                
+                if not self.stop_requested and elapsed > 120:  # 2 minutes with no updates
                     self.log_message("WARNING: No progress detected for 2 minutes. The process may be stuck.")
                     self.log_message("You can click the Stop Operation button to abort.")
                     # Schedule another check in 60 seconds
@@ -1361,9 +1377,9 @@ class FolderSyncApp:
             remote_files = folder_sync.list_remote_files(
                 self.sftp_client,
                 remote_dir, 
-                extension_filters=extension_filter,
+                extension_filters=fixed_extension_filter,
                 filter_mode=filter_mode,
-                folder_exclusions=folder_exclusions,
+                folder_exclusions=fixed_folder_exclusions,
                 calculate_hashes=True,
                 stop_check=lambda: self.stop_requested
             )
@@ -1374,9 +1390,9 @@ class FolderSyncApp:
                 self.status_var.set("Cache generation stopped by user.")
                 self.log_message("Cache generation stopped by user.")
                 self._reset_ui_after_sync()
-            return
+                return
             
-            remote_file_count = len(remote_files)
+            remote_file_count = len(remote_files) if remote_files else 0
             self.log_message(f"Found {remote_file_count} files in remote directory")
             self.log_message(f"Remote processing took {remote_duration:.1f} seconds")
             
@@ -1398,6 +1414,40 @@ class FolderSyncApp:
             traceback.print_exc()
         finally:
             self._reset_ui_after_sync()
+            
+    def _check_ssh_connection(self, folder_sync):
+        """Check if SSH connection is still valid and reconnect if needed"""
+        try:
+            # Try a simple command to test connection
+            self.ssh_client.exec_command("echo test", timeout=5)
+            self.log_message("SSH connection verified")
+        except Exception as e:
+            self.log_message(f"SSH connection error, attempting to reconnect: {str(e)}")
+            try:
+                # Reconnect if needed
+                self.ssh_client.close()
+                self.sftp_client.close()
+                self.ssh_client = paramiko.SSHClient()
+                self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                self.ssh_client.connect(
+                    hostname=self.host_var.get(),
+                    port=int(self.port_var.get()),
+                    username=self.username_var.get(),
+                    password=self.password_var.get()
+                )
+                self.sftp_client = self.ssh_client.open_sftp()
+                folder_sync.ssh = self.ssh_client
+                folder_sync.sftp = self.sftp_client
+                
+                # Set keepalive to maintain connection
+                transport = self.ssh_client.get_transport()
+                if transport:
+                    transport.set_keepalive(30)  # Send keepalive packet every 30 seconds
+                
+                self.log_message("SSH connection re-established successfully")
+            except Exception as reconnect_error:
+                self.log_message(f"Failed to reconnect: {str(reconnect_error)}")
+                raise reconnect_error
 
     def _reset_ui_after_sync(self):
         """Reset UI elements after a sync operation"""
