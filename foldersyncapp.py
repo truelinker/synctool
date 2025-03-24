@@ -154,7 +154,7 @@ class FolderSyncApp:
         compression_frame.grid(column=0, row=3, columnspan=2, sticky=tk.W, pady=5)
         
         # Use compression checkbox
-        self.use_compression = tk.BooleanVar(value=False)
+        self.use_compression = tk.BooleanVar(value=True)
         ttk.Checkbutton(compression_frame, text="Use Compression", 
                        variable=self.use_compression).pack(side=tk.LEFT, padx=5)
         
@@ -175,9 +175,16 @@ class FolderSyncApp:
         ttk.Checkbutton(skip_compressed_frame, text="Skip Already Compressed Files", 
                        variable=self.skip_compressed).pack(side=tk.LEFT, padx=5)
         
+        # Extract archives checkbox
+        self.extract_archives = tk.BooleanVar(value=True)
+        extract_archives_frame = ttk.Frame(self.transfer_frame)
+        extract_archives_frame.grid(column=0, row=5, columnspan=2, sticky=tk.W, pady=5)
+        ttk.Checkbutton(extract_archives_frame, text="Extract Archives on Destination",
+                         variable=self.extract_archives).pack(side=tk.LEFT, padx=5)
+        
         # Transfer action buttons
         transfer_button_frame = ttk.Frame(self.transfer_frame)
-        transfer_button_frame.grid(column=0, row=5, columnspan=2, pady=10)
+        transfer_button_frame.grid(column=0, row=6, columnspan=2, pady=10)
         
         # Transfer button
         self.transfer_button = ttk.Button(transfer_button_frame, text="Start File Transfer", 
@@ -244,7 +251,7 @@ class FolderSyncApp:
         # Enable/disable folder exclusions
         self.use_folder_exclusions = tk.BooleanVar(value=False)
         ttk.Checkbutton(folder_exclusion_frame, text="Exclude Folders", 
-                      variable=self.use_folder_exclusions).pack(side=tk.LEFT, padx=5)
+                        variable=self.use_folder_exclusions).pack(side=tk.LEFT, padx=5)
         
         # Create exclusion list component
         self.folder_exclusions_component = self.create_exclusion_list_frame(self.sync_frame, "Folders to exclude")
@@ -285,7 +292,7 @@ class FolderSyncApp:
                       variable=self.force_sync_var).pack(side=tk.LEFT, padx=5)
         
         # Add Use Cache Only option
-        self.use_cache_only_var = tk.BooleanVar(value=True)
+        self.use_cache_only_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(debug_frame, text="Use Cache Only (faster)",
                       variable=self.use_cache_only_var).pack(side=tk.LEFT, padx=5)
         
@@ -493,7 +500,7 @@ class FolderSyncApp:
         if not self.ssh_client or not self.sftp_client:
             messagebox.showerror("Error", "You must connect to SSH first")
             return
-            
+        
         # Create a simple dialog to browse remote directories
         dialog = tk.Toplevel(self.root)
         dialog.title("Browse Remote Folder")
@@ -665,6 +672,7 @@ class FolderSyncApp:
         use_compression = self.use_compression.get()
         compression_level = self.compression_level.get()
         skip_compressed = self.skip_compressed.get()
+        extract_archives = self.extract_archives.get()
             
         # Disable buttons during transfer
         self.transfer_button.config(state=tk.DISABLED)
@@ -679,13 +687,13 @@ class FolderSyncApp:
         self.sync_thread = threading.Thread(
             target=self.run_transfer,
             args=(local_dir, remote_dir, direction, folder_exclusions, 
-                 use_compression, compression_level, skip_compressed)
+                 use_compression, compression_level, skip_compressed, extract_archives)
         )
         self.sync_thread.daemon = True
         self.sync_thread.start()
     
     def run_transfer(self, local_dir, remote_dir, direction, folder_exclusions, 
-                    use_compression, compression_level, skip_compressed):
+                    use_compression, compression_level, skip_compressed, extract_archives):
         """Run the file transfer process"""
         try:
             # Create FolderSync instance
@@ -717,7 +725,8 @@ class FolderSyncApp:
                 stop_check=lambda: self.stop_requested,
                 use_compression=use_compression,
                 compression_level=compression_level,
-                skip_compressed=skip_compressed
+                skip_compressed=skip_compressed,
+                extract_archives=extract_archives
             )
             
             if self.stop_requested:
@@ -947,6 +956,7 @@ class FolderSyncApp:
                 'use_compression': self.use_compression.get(),
                 'compression_level': self.compression_level.get(),
                 'skip_compressed': self.skip_compressed.get(),
+                'extract_archives': self.extract_archives.get(),
                 'force_sync': self.force_sync_var.get(),
                 'use_cache_only': self.use_cache_only_var.get()
             }
@@ -957,16 +967,16 @@ class FolderSyncApp:
             self.log_message("Settings saved successfully")
         except Exception as e:
             self.log_message(f"Error saving settings: {str(e)}")
-            
+    
     def load_settings(self):
         """Load settings from file"""
         if not os.path.exists(self.settings_file):
             return
-            
+        
         try:
             with open(self.settings_file, 'r') as f:
                 settings = json.load(f)
-                
+            
             # Set values from loaded settings
             self.host_var.set(settings.get('host', ''))
             self.port_var.set(settings.get('port', '22'))
@@ -1019,11 +1029,12 @@ class FolderSyncApp:
             
             # Other settings
             self.save_settings_var.set(settings.get('save_settings', True))
-            self.use_compression.set(settings.get('use_compression', False))
+            self.use_compression.set(settings.get('use_compression', True))
             self.compression_level.set(settings.get('compression_level', 'balanced'))
             self.skip_compressed.set(settings.get('skip_compressed', True))
+            self.extract_archives.set(settings.get('extract_archives', True))
             self.force_sync_var.set(settings.get('force_sync', False))
-            self.use_cache_only_var.set(settings.get('use_cache_only', True))
+            self.use_cache_only_var.set(settings.get('use_cache_only', False))
             
             self.log_message("Settings loaded successfully")
         except Exception as e:
@@ -1071,7 +1082,7 @@ class FolderSyncApp:
         self.disconnect_ssh()
         
         self.root.destroy()
-
+    
     def create_exclusion_list_frame(self, parent, label_text="Folder Exclusions"):
         """Create an improved folder exclusion list component with Listbox and buttons"""
         # Main container frame
@@ -1219,7 +1230,7 @@ class FolderSyncApp:
         )
         self.sync_thread.daemon = True
         self.sync_thread.start()
-
+    
     def _generate_cache_thread(self, local_dir, remote_dir, extension_filter, filter_mode, folder_exclusions):
         """Thread function to generate cache for local and remote files"""
         try:
@@ -1363,8 +1374,8 @@ class FolderSyncApp:
                 self.status_var.set("Cache generation stopped by user.")
                 self.log_message("Cache generation stopped by user.")
                 self._reset_ui_after_sync()
-                return
-
+            return
+            
             remote_file_count = len(remote_files)
             self.log_message(f"Found {remote_file_count} files in remote directory")
             self.log_message(f"Remote processing took {remote_duration:.1f} seconds")

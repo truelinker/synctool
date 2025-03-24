@@ -34,7 +34,7 @@ class FolderSync:
     ):
         """
         Initialize the folder sync with an optional callback for progress updates
-
+        
         callback: function(status_message, progress_percentage, log_message)
         local_cache_file: path to file for caching local file metadata
         remote_cache_file: path to file for caching remote file metadata
@@ -43,19 +43,19 @@ class FolderSync:
         self.callback = callback
         self.total_files = 0
         self.current_file = 0
-
+        
         # Determine the number of workers to use (default to CPU count)
         self.max_workers = max_workers or multiprocessing.cpu_count()
         self.log(f"Using up to {self.max_workers} worker processes for file comparison")
-
+        
         # Metadata cache files
         self.local_cache_file = local_cache_file
         self.remote_cache_file = remote_cache_file
-
+        
         # Metadata dictionaries (loaded from cache)
         self.local_metadata = {}
         self.remote_metadata = {}
-
+    
     def _safe_file_copy(
         self, sftp_client, remote_path, local_path, max_retries=3, retry_delay=2
     ):
@@ -157,14 +157,14 @@ class FolderSync:
             self.callback(log_message=message)
         else:
             print(message)
-
+    
     def update_status(self, status):
         """Update status message using the callback if available"""
         if self.callback:
             self.callback(status_message=status)
         else:
             print(status)
-
+    
     def update_progress(self, status_message=None, progress=None):
         """Update progress and optionally status message using the callback if available"""
         if self.callback:
@@ -172,11 +172,11 @@ class FolderSync:
         else:
             if status_message:
                 print(f"{status_message} - {progress}%")
-
+    
     def get_file_hash(self, file_path):
         """Calculate MD5 hash for a file"""
         hash_md5 = hashlib.md5()
-
+        
         try:
             with open(file_path, "rb") as f:
                 for chunk in iter(lambda: f.read(4096), b""):
@@ -185,7 +185,7 @@ class FolderSync:
         except Exception as e:
             self.log(f"Error calculating hash for {file_path}: {str(e)}")
             return None
-
+    
     def get_remote_file_hash(
         self, sftp, file_path, timeout=30, max_size=100 * 1024 * 1024
     ):
@@ -198,7 +198,7 @@ class FolderSync:
             max_size: Maximum file size in bytes to fully hash (0 for no limit)
         """
         hash_md5 = hashlib.md5()
-
+        
         try:
             # Get file size
             stat = sftp.stat(file_path)
@@ -335,18 +335,18 @@ class FolderSync:
                 )
             else:
                 hash_value = self.get_file_hash(info["path"])
-
+                
             results[rel_path] = hash_value
-
+            
         return results
-
+    
     def calculate_hashes_parallel(
         self, files_dict, is_remote=False, sftp=None, stop_check=None
     ):
         """Calculate hashes for multiple files in parallel using multiple cores"""
         if not files_dict:
             return {}
-
+            
         # Check if we should stop
         if stop_check and stop_check():
             self.log("Hash calculation stopped by user")
@@ -358,10 +358,10 @@ class FolderSync:
             for rel_path, info in files_dict.items()
             if info["hash"] is None
         }
-
+        
         if not files_to_hash:
             return {}
-
+            
         total_files = len(files_to_hash)
         self.log(
             f"Calculating hashes for {total_files} files using {self.max_workers} workers"
@@ -380,7 +380,7 @@ class FolderSync:
         batches = []
         current_batch = {}
         count = 0
-
+        
         for rel_path, info in files_to_hash.items():
             # Check more frequently if we should stop
             if count % 20 == 0 and stop_check and stop_check():
@@ -389,22 +389,22 @@ class FolderSync:
 
             current_batch[rel_path] = info
             count += 1
-
+            
             if count >= batch_size:
                 batches.append(current_batch)
                 current_batch = {}
                 count = 0
-
+                
         if current_batch:
             batches.append(current_batch)
-
+        
         results = {}
         completed_batches = 0
         completed_files = 0
         total_batches = len(batches)
         failed_files = 0
         timeout_files = 0
-
+        
         # Process batches in parallel using ThreadPoolExecutor for local files
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures = []
@@ -464,7 +464,7 @@ class FolderSync:
             self.log(
                 f"Hash calculation completed with {timeout_files} timeouts and {failed_files} failures"
             )
-
+        
         # Update the original dictionary with the calculated hashes
         for rel_path, hash_value in results.items():
             files_dict[rel_path]["hash"] = hash_value
@@ -560,14 +560,14 @@ class FolderSync:
         for rel_path, hash_value in results.items():
             if rel_path in files_to_hash:
                 files_to_hash[rel_path]["hash"] = hash_value
-
+            
         return results
-
+    
     def load_local_metadata(self):
         """Load local file metadata from cache file"""
         if not self.local_cache_file or not os.path.exists(self.local_cache_file):
             return {}
-
+        
         try:
             with open(self.local_cache_file, "r") as f:
                 metadata = json.load(f)
@@ -576,18 +576,18 @@ class FolderSync:
         except Exception as e:
             self.log(f"Error loading local metadata cache: {str(e)}")
             return {}
-
+    
     def save_local_metadata(self, metadata):
         """Save local file metadata to cache file"""
         if not self.local_cache_file:
             return False
-
+        
         try:
             # Create directory if it doesn't exist
             cache_dir = os.path.dirname(self.local_cache_file)
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
-
+                
             with open(self.local_cache_file, "w") as f:
                 json.dump(metadata, f)
             self.log(f"Saved metadata for {len(metadata)} local files to cache")
@@ -595,12 +595,12 @@ class FolderSync:
         except Exception as e:
             self.log(f"Error saving local metadata cache: {str(e)}")
             return False
-
+    
     def load_remote_metadata(self):
         """Load remote file metadata from cache file"""
         if not self.remote_cache_file or not os.path.exists(self.remote_cache_file):
             return {}
-
+        
         try:
             with open(self.remote_cache_file, "r") as f:
                 metadata = json.load(f)
@@ -609,18 +609,18 @@ class FolderSync:
         except Exception as e:
             self.log(f"Error loading remote metadata cache: {str(e)}")
             return {}
-
+    
     def save_remote_metadata(self, metadata):
         """Save remote file metadata to cache file"""
         if not self.remote_cache_file:
             return False
-
+        
         try:
             # Create directory if it doesn't exist
             cache_dir = os.path.dirname(self.remote_cache_file)
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
-
+                
             with open(self.remote_cache_file, "w") as f:
                 json.dump(metadata, f)
             self.log(f"Saved metadata for {len(metadata)} remote files to cache")
@@ -628,7 +628,7 @@ class FolderSync:
         except Exception as e:
             self.log(f"Error saving remote metadata cache: {str(e)}")
             return False
-
+    
     def list_local_files(
         self,
         local_dir,
@@ -646,15 +646,15 @@ class FolderSync:
         """
         if ignore_patterns is None:
             ignore_patterns = []
-
+            
         if folder_exclusions is None:
             folder_exclusions = []
-
+            
         result = {}
-
+        
         # Try to load from cache first
         cached_metadata = self.load_local_metadata()
-
+        
         if use_cache_only and cached_metadata:
             self.log(
                 "Using cached metadata only for local files (faster, but new files won't be detected)"
@@ -664,10 +664,10 @@ class FolderSync:
             if not os.path.exists(local_dir):
                 self.log(f"Local directory {local_dir} does not exist")
                 return {}
-
+            
             # First, check which files still exist and have the same metadata
             cached_files_still_valid = set()
-
+            
             for rel_path, cached_info in cached_metadata.items():
                 # Check if we should stop
                 if stop_check and stop_check():
@@ -675,24 +675,24 @@ class FolderSync:
                     return {}
 
                 full_path = os.path.join(local_dir, rel_path.replace("/", os.path.sep))
-
+                
                 # Check if file still exists
                 if not os.path.exists(full_path):
                     continue
-
+                
                 # Check if folder should be excluded
                 should_exclude = False
                 file_dir = os.path.dirname(rel_path)
-
+                
                 for exclusion in folder_exclusions:
                     # Check if the file is in an excluded folder or subfolder
                     if file_dir == exclusion or file_dir.startswith(exclusion + "/"):
                         should_exclude = True
                         break
-
+                
                 if should_exclude:
                     continue
-
+                
                 # Check if extension filter applies
                 if extension_filters:
                     file_matches_filter = False
@@ -700,17 +700,17 @@ class FolderSync:
                         if fnmatch.fnmatch(os.path.basename(rel_path), pattern):
                             file_matches_filter = True
                             break
-
+                    
                     # Skip based on filter mode
                     if (filter_mode == "include" and not file_matches_filter) or (
                         filter_mode == "exclude" and file_matches_filter
                     ):
                         continue
-
+                
                 # Check if file has been modified
                 current_size = os.path.getsize(full_path)
                 current_mtime = os.path.getmtime(full_path)
-
+                
                 # If size and mtime match exactly, keep the cached info
                 if (
                     abs(cached_info["size"] - current_size) < 2
@@ -727,7 +727,7 @@ class FolderSync:
                         "mtime": current_mtime,
                     }
                     cached_files_still_valid.add(rel_path)
-
+            
             # If use_cache_only is True and no files match the filter, fall
             # back to full scan
             if use_cache_only and not result:
@@ -750,79 +750,79 @@ class FolderSync:
                         )
                         break
 
-                # Remove excluded folders from dirs to prevent walking them
-                dirs_to_remove = []
-                rel_root = os.path.relpath(root, local_dir).replace("\\", "/")
-
-                if rel_root == ".":
-                    rel_root = ""
-
-                for i, d in enumerate(dirs):
-                    # Check if directory should be excluded
-                    for exclusion in folder_exclusions:
-                        dir_path = os.path.join(rel_root, d).replace("\\", "/")
-                        if (
-                            dir_path == exclusion
-                            or dir_path.startswith(exclusion + "/")
-                            or d == exclusion
-                        ):
-                            dirs_to_remove.append(i)
-                            break
-
-                    # Also check if directory matches any ignore patterns
-                    for pattern in ignore_patterns:
-                        if fnmatch.fnmatch(d, pattern):
-                            if i not in dirs_to_remove:
+                    # Remove excluded folders from dirs to prevent walking them
+                    dirs_to_remove = []
+                    rel_root = os.path.relpath(root, local_dir).replace("\\", "/")
+                    
+                    if rel_root == ".":
+                        rel_root = ""
+                        
+                    for i, d in enumerate(dirs):
+                        # Check if directory should be excluded
+                        for exclusion in folder_exclusions:
+                            dir_path = os.path.join(rel_root, d).replace("\\", "/")
+                            if (
+                                dir_path == exclusion
+                                or dir_path.startswith(exclusion + "/")
+                                or d == exclusion
+                            ):
                                 dirs_to_remove.append(i)
-                            break
-
-                # Remove excluded directories from the list (in reverse order
-                # to maintain indices)
-                for i in sorted(dirs_to_remove, reverse=True):
-                    del dirs[i]
-
-                # Process files
-                for file in files:
-                    # Check if file should be ignored
-                    skip_file = False
-                    for pattern in ignore_patterns:
-                        if fnmatch.fnmatch(file, pattern):
-                            skip_file = True
-                            break
-
-                    if skip_file:
-                        continue
-
-                    # Apply extension filtering if provided
-                    if extension_filters:
-                        file_matches_filter = False
-                        for pattern in extension_filters:
-                            if fnmatch.fnmatch(file, pattern):
-                                file_matches_filter = True
                                 break
-
-                        # Skip based on filter mode
-                        if (filter_mode == "include" and not file_matches_filter) or (
-                            filter_mode == "exclude" and file_matches_filter
-                        ):
+                                
+                        # Also check if directory matches any ignore patterns
+                        for pattern in ignore_patterns:
+                            if fnmatch.fnmatch(d, pattern):
+                                if i not in dirs_to_remove:
+                                    dirs_to_remove.append(i)
+                                break
+                
+                    # Remove excluded directories from the list (in reverse order
+                    # to maintain indices)
+                    for i in sorted(dirs_to_remove, reverse=True):
+                        del dirs[i]
+                    
+                    # Process files
+                    for file in files:
+                        # Check if file should be ignored
+                        skip_file = False
+                        for pattern in ignore_patterns:
+                            if fnmatch.fnmatch(file, pattern):
+                                skip_file = True
+                                break
+                        
+                        if skip_file:
                             continue
-
-                    full_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(full_path, local_dir)
-                    # Convert Windows path separators to Unix
-                    rel_path = rel_path.replace("\\", "/")
-
-                    # If we already processed this file from cache, skip it
-                    if rel_path in cached_files_still_valid:
-                        continue
-
-                    # This is a new file, add it to the result
-                    result[rel_path] = {
-                        "path": full_path,
-                        "hash": None,  # We'll calculate hashes later
-                        "size": os.path.getsize(full_path),
-                        "mtime": os.path.getmtime(full_path),
-                    }
+                        
+                        # Apply extension filtering if provided
+                        if extension_filters:
+                            file_matches_filter = False
+                            for pattern in extension_filters:
+                                if fnmatch.fnmatch(file, pattern):
+                                    file_matches_filter = True
+                                    break
+                            
+                            # Skip based on filter mode
+                            if (filter_mode == "include" and not file_matches_filter) or (
+                                filter_mode == "exclude" and file_matches_filter
+                            ):
+                                continue
+                            
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, local_dir)
+                        # Convert Windows path separators to Unix
+                        rel_path = rel_path.replace("\\", "/")
+                        
+                        # If we already processed this file from cache, skip it
+                        if rel_path in cached_files_still_valid:
+                            continue
+                        
+                        # This is a new file, add it to the result
+                        result[rel_path] = {
+                            "path": full_path,
+                            "hash": None,  # We'll calculate hashes later
+                            "size": os.path.getsize(full_path),
+                            "mtime": os.path.getmtime(full_path),
+                        }
 
             if use_cache_only:
                 self.log(f"Found {len(result)} valid files in local cache")
@@ -830,23 +830,23 @@ class FolderSync:
                 self.log(
                     f"Found {len(result)} files in local directory (of which {len(cached_files_still_valid)} from cache)"
                 )
-
+            
             # Calculate hashes in parallel if requested
             if calculate_hashes:
                 self.log("Pre-calculating hashes for local files...")
                 self.calculate_hashes_parallel(
                     result, is_remote=False, stop_check=stop_check
                 )
-
+            
             # Store the local metadata for later saving
             self.local_metadata = result
-
+            
             return result
-
+            
         except Exception as e:
             self.log(f"Error scanning local directory: {str(e)}")
             return {}
-
+    
     def list_remote_files(
         self,
         sftp,
@@ -867,15 +867,15 @@ class FolderSync:
 
         if ignore_patterns is None:
             ignore_patterns = []
-
+            
         if folder_exclusions is None:
             folder_exclusions = []
-
+            
         result = {}
-
+        
         # Try to load from cache first
         cached_metadata = self.load_remote_metadata()
-
+        
         if use_cache_only and cached_metadata:
             self.log(
                 "Using cached metadata only for remote files (faster, but new files won't be detected)"
@@ -922,7 +922,7 @@ class FolderSync:
                 self.callback(
                     status_message=f"Scanning remote directory: {path}"
                 )
-
+            
             for entry in entries:
                 # Check if we should stop more frequently
                 if stop_check and stop_check() and len(result) % 20 == 0:
@@ -936,7 +936,7 @@ class FolderSync:
                 if name.startswith("."):
                     self.log(f"DEBUG: Skipping hidden entry: {name}")
                     continue
-
+                        
                 # Get relative path
                 rel_path = os.path.relpath(full_path, base_path).replace(
                     "\\", "/"
@@ -944,62 +944,62 @@ class FolderSync:
 
                 # If it's a directory, recurse
                 if stat.S_ISDIR(entry.st_mode):
-                    # Check if directory should be excluded
-                    should_exclude = False
-                    for exclusion in folder_exclusions:
-                        if rel_path == exclusion or rel_path.startswith(
-                            exclusion + "/"
+                        # Check if directory should be excluded
+                        should_exclude = False
+                        for exclusion in folder_exclusions:
+                            if rel_path == exclusion or rel_path.startswith(
+                                exclusion + "/"
+                            ):
+                                should_exclude = True
+                                self.log(
+                                    f"DEBUG: Excluding directory: {rel_path} (matches exclusion: {exclusion})"
+                                )
+                                break
+                                
+                        if should_exclude:
+                            continue
+                            
+                        # Recurse into subdirectory
+                        if scan_remote_dir(
+                            sftp,
+                            full_path,
+                            base_path,
+                            result,
+                            files_found,
+                            ignore_patterns,
+                            extension_filters,
+                            filter_mode,
+                            folder_exclusions,
+                            calculate_hashes,
+                            stop_check,
                         ):
-                            should_exclude = True
-                            self.log(
-                                f"DEBUG: Excluding directory: {rel_path} (matches exclusion: {exclusion})"
-                            )
-                            break
+                            return True  # Propagate stop signal up
 
-                    if should_exclude:
-                        continue
-
-                    # Recurse into subdirectory
-                    if scan_remote_dir(
-                        sftp,
-                        full_path,
-                        base_path,
-                        result,
-                        files_found,
-                        ignore_patterns,
-                        extension_filters,
-                        filter_mode,
-                        folder_exclusions,
-                        calculate_hashes,
-                        stop_check,
-                    ):
-                        return True  # Propagate stop signal up
-
-                else:
-                    # Check if parent directory should be excluded
-                    dir_path = os.path.dirname(rel_path)
-                    should_exclude = False
-                    for exclusion in folder_exclusions:
-                        if dir_path == exclusion or dir_path.startswith(
-                            exclusion + "/"
-                        ):
-                            should_exclude = True
-                            self.log(
-                                f"DEBUG: Excluding file due to parent directory: {rel_path} (parent matches exclusion: {exclusion})"
-                            )
-                            break
-
-                    if should_exclude:
-                        continue
-
-                    # Apply extension filtering if provided
-                    if extension_filters:
-                        file_matches_filter = False
+                        else:
+                            # Check if parent directory should be excluded
+                            dir_path = os.path.dirname(rel_path)
+                            should_exclude = False
+                            for exclusion in folder_exclusions:
+                                if dir_path == exclusion or dir_path.startswith(
+                                    exclusion + "/"
+                                ):
+                                    should_exclude = True
+                                    self.log(
+                                        f"DEBUG: Excluding file due to parent directory: {rel_path} (parent matches exclusion: {exclusion})"
+                                    )
+                                    break
+                                
+                        if should_exclude:
+                            continue
+                            
+                        # Apply extension filtering if provided
+                        if extension_filters:
+                            file_matches_filter = False
                         for ext in extension_filters:
                             if name.lower().endswith(ext.lower()):
-                                file_matches_filter = True
-                                break
-
+                                    file_matches_filter = True
+                                    break
+                            
                         # Skip file based on filter mode
                         if (
                             filter_mode == "include" and not file_matches_filter
@@ -1008,36 +1008,36 @@ class FolderSync:
                                 f"DEBUG: Skipping file due to filter: {name} (filter_mode: {filter_mode}, matches_filter: {file_matches_filter})"
                             )
                             continue
-
-                    files_found.add(rel_path)
-
-                    # Check if we have cached metadata for this file
-                    if rel_path in cached_metadata:
-                        cached_info = cached_metadata[rel_path]
-
-                        # If size and mtime match, use cached info
+                                
+                        files_found.add(rel_path)
+                        
+                        # Check if we have cached metadata for this file
+                        if rel_path in cached_metadata:
+                            cached_info = cached_metadata[rel_path]
+                            
+                            # If size and mtime match, use cached info
                         if (
                             abs(cached_info["size"] - entry.st_size) < 2
                             and abs(cached_info["mtime"] - entry.st_mtime) < 2
                         ):
-                            result[rel_path] = cached_info.copy()
-                            continue
-
+                                result[rel_path] = cached_info.copy()
+                                continue
+                        
                     # File is new or has changed, add with fresh
                     # metadata
-                    result[rel_path] = {
+                        result[rel_path] = {
                         "path": full_path,
                         "hash": None,  # We'll calculate hashes later
                         "size": entry.st_size,
                         "mtime": entry.st_mtime,
                     }
 
-                    # Update progress periodically during scanning
-                    if len(result) % 50 == 0 and self.callback:
-                        self.callback(
-                            status_message=f"Found {len(result)} remote files so far...",
-                            progress=None,
-                        )
+                        # Update progress periodically during scanning
+                        if len(result) % 50 == 0 and self.callback:
+                            self.callback(
+                                status_message=f"Found {len(result)} remote files so far...",
+                                progress=None,
+                            )
 
             return False  # Continue scanning
 
@@ -1147,7 +1147,7 @@ class FolderSync:
                 self.log(
                     f"DEBUG: Adjusted remote directory path to ensure it ends with '/': {remote_dir}"
                 )
-
+                
             # Start recursive scan
             self.log(
                 f"DEBUG: Starting recursive scan of remote directory: {remote_dir}"
@@ -1179,33 +1179,33 @@ class FolderSync:
             # If stopped, return what we have so far
             if stopped:
                 return result
-
+            
             cached_files_used = len(set(result.keys()) & set(cached_metadata.keys()))
             new_files_found = len(result) - cached_files_used
-
+            
             self.log(
                 f"Found {len(result)} files in remote directory (of which {cached_files_used} from cache, {new_files_found} new)"
             )
-
+            
             # Calculate hashes in parallel if requested
             if calculate_hashes:
                 self.log("Pre-calculating hashes for remote files...")
                 self.calculate_hashes_parallel(
                     result, is_remote=True, sftp=sftp, stop_check=stop_check
                 )
-
+            
             # Store the remote metadata for later saving
             self.remote_metadata = result
-
+            
             return result
-
+            
         except Exception as e:
             self.log(f"ERROR in list_remote_files: {str(e)}")
             import traceback
 
             self.log(f"ERROR Traceback: {traceback.format_exc()}")
             return {}
-
+    
     def sync_with_existing_connection(
         self,
         ssh_client,
@@ -1229,7 +1229,7 @@ class FolderSync:
         If use_cache_only is True, only files in the cache will be checked (faster but may miss new files)
         """
         self.update_status("Starting synchronization with existing connection...")
-
+        
         # Starting timestamp for the operation
         start_time = time.time()
 
@@ -1274,12 +1274,12 @@ class FolderSync:
                 self.log(f"Including extensions: {extension_filters}")
             else:
                 self.log(f"Excluding extensions: {extension_filters}")
-
+                
             if content_only_compare:
                 self.log("Using content-only comparison (slower but more accurate)")
             else:
                 self.log("Using quick comparison (size and modification time)")
-
+                
         # Log excluded folders if any
         if folder_exclusions:
             self.log(f"Excluded folders: {', '.join(folder_exclusions)}")
@@ -1306,30 +1306,30 @@ class FolderSync:
         except Exception as e:
             self.log(f"Warning: Could not create cache directory: {str(e)}")
 
-        # Scan directories
-        self.update_status("Scanning local directory...")
-        local_files = self.list_local_files(
-            local_dir,
-            extension_filters=extension_filters,
-            filter_mode=filter_mode,
-            folder_exclusions=folder_exclusions,
+            # Scan directories
+            self.update_status("Scanning local directory...")
+            local_files = self.list_local_files(
+                local_dir, 
+                extension_filters=extension_filters, 
+                filter_mode=filter_mode,
+                folder_exclusions=folder_exclusions,
             calculate_hashes=content_only_compare,
             stop_check=stop_check,
             use_cache_only=use_cache_only,
-        )
-
-        # Check if stop was requested
-        if stop_check and stop_check():
-            self.log("Synchronization stopped before scanning remote directory")
-            return False
-
-        self.update_status("Scanning remote directory...")
-        remote_files = self.list_remote_files(
-            sftp_client,
-            remote_dir,
-            extension_filters=extension_filters,
-            filter_mode=filter_mode,
-            folder_exclusions=folder_exclusions,
+            )
+            
+            # Check if stop was requested
+            if stop_check and stop_check():
+                self.log("Synchronization stopped before scanning remote directory")
+                return False
+                
+            self.update_status("Scanning remote directory...")
+            remote_files = self.list_remote_files(
+                sftp_client, 
+                remote_dir, 
+                extension_filters=extension_filters, 
+                filter_mode=filter_mode,
+                folder_exclusions=folder_exclusions,
             calculate_hashes=content_only_compare,
             stop_check=stop_check,
             use_cache_only=use_cache_only,
@@ -1350,17 +1350,17 @@ class FolderSync:
         else:
             self.log("No remote-only files found.")
 
-        # Check if stop was requested
-        if stop_check and stop_check():
-            self.log("Synchronization stopped after scanning directories")
-            return False
-
+            # Check if stop was requested
+            if stop_check and stop_check():
+                self.log("Synchronization stopped after scanning directories")
+                return False
+            
         # Perform sync based on direction
-        sync_success = True
-
+            sync_success = True
+            
         # Local to remote sync if needed
         if sync_mode in ["both", "to_remote"]:
-            to_remote_success = self._sync_local_to_remote(
+                to_remote_success = self._sync_local_to_remote(
                 ssh_client,
                 sftp_client,
                 local_dir,
@@ -1372,12 +1372,12 @@ class FolderSync:
                 transfer_method,
                 verbose_logging,
                 force_sync,
-            )
-            sync_success = sync_success and to_remote_success
-
+                )
+                sync_success = sync_success and to_remote_success
+                
         # Remote to local sync if needed
         if sync_mode in ["both", "to_local"]:
-            to_local_success = self._sync_remote_to_local(
+                to_local_success = self._sync_remote_to_local(
                 ssh_client,
                 sftp_client,
                 local_dir,
@@ -1389,23 +1389,23 @@ class FolderSync:
                 transfer_method,
                 verbose_logging,
                 force_sync,
-            )
-            sync_success = sync_success and to_local_success
-
-        # Final stop check
-        if stop_check and stop_check():
-            return False
-
-        # Save metadata cache if sync was successful
-        if sync_success:
-            self.save_local_metadata(self.local_metadata)
-            self.save_remote_metadata(self.remote_metadata)
-
-        self.update_status("Synchronization completed")
-        self.update_progress(100)
-
+                )
+                sync_success = sync_success and to_local_success
+            
+                # Final stop check
+                if stop_check and stop_check():
+                    return False
+            
+                # Save metadata cache if sync was successful
+                if sync_success:
+                    self.save_local_metadata(self.local_metadata)
+                    self.save_remote_metadata(self.remote_metadata)
+                
+                self.update_status("Synchronization completed")
+                self.update_progress(100)
+            
         return True
-
+    
     def sync_directories(
         self,
         host,
@@ -1447,11 +1447,11 @@ class FolderSync:
         force_sync: When True, transfer all files regardless of comparison
         use_cache_only: When True, only check files in the cache (faster but may miss new files)
         """
-        # Create SSH client
+            # Create SSH client
         ssh_client = paramiko.SSHClient()
         ssh_client.load_system_host_keys()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
+            
         try:
             # Connect to SSH server
             self.update_status("Connecting to SSH server...")
@@ -1484,7 +1484,7 @@ class FolderSync:
             self.log(error_msg)
             traceback.print_exc()
             return False
-
+    
         finally:
             # Close connections
             try:
@@ -1913,13 +1913,13 @@ class FolderSync:
             if local_info.st_size != remote_info.st_size:
                 self.log(f"Size differs: {local_info.st_size} vs {remote_info.st_size}")
                 return True
-
+    
             # Compare modification times with a tolerance of 2 seconds
             time_diff = abs(local_info.st_mtime - remote_info.st_mtime)
             if time_diff > 2:
                 self.log(f"Time differs: {time_diff} seconds")
                 return True
-
+            
             return False
 
         # Content-based comparison using MD5 checksum
@@ -1953,6 +1953,7 @@ class FolderSync:
         use_compression=False,
         compression_level="balanced",
         skip_compressed=True,
+        extract_archives=True,
     ):
         """
         Transfer files from source directory to destination directory.
@@ -1971,6 +1972,7 @@ class FolderSync:
         - use_compression: Whether to use compression
         - compression_level: "fast", "balanced", or "maximum"
         - skip_compressed: Whether to skip already compressed files
+        - extract_archives: Whether to extract compressed archives on the destination (True) or keep them as-is (False)
 
         Returns:
         - (total_files, transferred_files, error_count)
@@ -2021,6 +2023,7 @@ class FolderSync:
                         compression_level,
                         skip_compressed,
                         stop_check,
+                        extract_archives,
                     )
                 else:
                     # Download with compression
@@ -2124,9 +2127,33 @@ class FolderSync:
         compression_level,
         skip_compressed,
         stop_check,
+        extract_archives=True,
     ):
         """Handle uploading with compression from local to remote"""
+        # Normalize the local directory path for consistent handling
+        local_dir = os.path.normpath(local_dir)
         self.log(f"Preparing compressed upload from {local_dir} to {remote_dir}")
+        self.log(f"DEBUG: Normalized local path: {local_dir}")
+        
+        # Add debug log to check if the directory exists
+        if not os.path.exists(local_dir):
+            self.log(f"ERROR: Local directory does not exist: {local_dir}")
+            return 0, 0, 0
+        elif not os.path.isdir(local_dir):
+            self.log(f"ERROR: Path exists but is not a directory: {local_dir}")
+            return 0, 0, 0
+        else:
+            self.log(f"DEBUG: Local directory exists: {local_dir}")
+            
+        # Try to list the directory contents to verify accessibility
+        try:
+            dir_contents = os.listdir(local_dir)
+            self.log(f"DEBUG: Directory contains {len(dir_contents)} items")
+            if len(dir_contents) == 0:
+                self.log("WARNING: Local directory is empty")
+        except Exception as e:
+            self.log(f"ERROR: Cannot read directory contents: {str(e)}")
+            return 0, 0, 0
 
         # Map compression levels to zipfile compression constants
         compression_map = {
@@ -2172,12 +2199,40 @@ class FolderSync:
                 ".mp4",
                 ".avi",
             }
+            
+            self.log(f"DEBUG: Starting local directory scan on {local_dir}")
+            self.log(f"DEBUG: Skip compressed files setting: {skip_compressed}")
+            
+            total_found_files = 0
+            skipped_compressed_count = 0
 
             for root, dirs, files in os.walk(local_dir):
                 # Check if we need to stop
                 if stop_check and stop_check():
                     self.log("Upload stopped during directory scan")
                     return total_files, transferred_files, error_count
+                
+                rel_root = os.path.relpath(root, local_dir)
+                if rel_root == '.':
+                    rel_root = ''
+                
+                # Apply exclusions
+                dirs_to_remove = []
+                for i, d in enumerate(dirs):
+                    # Check if directory should be excluded
+                    for exclusion in exclusions:
+                        dir_path = os.path.join(rel_root, d).replace("\\", "/")
+                        if dir_path == exclusion or dir_path.startswith(exclusion + "/") or d == exclusion:
+                            self.log(f"DEBUG: Skipping excluded directory: {dir_path}")
+                            dirs_to_remove.append(i)
+                            break
+                
+                # Remove excluded directories in reverse order to maintain indices
+                for i in sorted(dirs_to_remove, reverse=True):
+                    del dirs[i]
+                
+                self.log(f"DEBUG: Found {len(files)} files in directory {root}")
+                total_found_files += len(files)
 
                 # Process files in this directory
                 for file in files:
@@ -2185,18 +2240,28 @@ class FolderSync:
                     relative_path = os.path.relpath(local_path, local_dir)
 
                     # Skip files that are already compressed if needed
-                    _, ext = os.path.splitext(file_path.lower())
+                    _, ext = os.path.splitext(local_path.lower())
                     if skip_compressed and ext in compressed_extensions:
-                        self.log(f"Skipping already compressed file: {rel_path}")
+                        self.log(f"DEBUG: Skipping already compressed file: {relative_path}")
+                        skipped_compressed_count += 1
                         continue
 
                     files_to_compress.append((local_path, relative_path))
 
                     total_files += 1
+            
+            self.log(f"DEBUG: Directory scan complete. Found {total_found_files} total files")
+            self.log(f"DEBUG: Skipped {skipped_compressed_count} compressed files")
+            self.log(f"DEBUG: Added {total_files} files to compress")
 
             # Check if we have files to compress
             if not files_to_compress:
                 self.log("No files to compress and transfer")
+                if total_found_files > 0 and skipped_compressed_count > 0:
+                    self.log("WARNING: All files were skipped because they have compressed extensions.")
+                    self.log("WARNING: To transfer these files, uncheck 'Skip Already Compressed Files'")
+                elif total_found_files == 0:
+                    self.log("WARNING: No files found in the source directory")
                 return total_files, 0, 0
 
             # Check if we need to stop before compressing
@@ -2243,12 +2308,14 @@ class FolderSync:
                 self.log("Upload stopped after compression")
                 return total_files, transferred_files, error_count
 
-            # Step 3: Create a temporary script to extract the zip on the remote side
-            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as script_file:
-                script_path = script_file.name
+            # Upload the compressed archive to the remote server
+            if extract_archives:
+                # Step 3: Create a temporary script to extract the zip on the remote side
+                with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as script_file:
+                    script_path = script_file.name
 
-                # Write extraction script
-                script_content = f"""#!/usr/bin/env python3
+                    # Write extraction script
+                    script_content = f"""#!/usr/bin/env python3
 import zipfile
 import os
 import sys
@@ -2292,26 +2359,38 @@ if __name__ == "__main__":
     success = extract_zip(zip_path, target_dir)
     sys.exit(0 if success else 1)
 """
-                script_file.write(script_content.encode("utf-8"))
+                    script_file.write(script_content.encode("utf-8"))
 
-            # Upload the temporary script
-            remote_script_path = f"{remote_dir}/_extract_temp.py"
-            self.log(f"Uploading extraction script to {remote_script_path}")
+                    # Upload the temporary script
+                    remote_script_path = f"{remote_dir}/_extract_temp.py"
+                    self.log(f"Uploading extraction script to {remote_script_path}")
 
-            try:
-                self.sftp.put(script_path, remote_script_path)
-                self.sftp.chmod(remote_script_path, 0o755)  # Make executable
-            except Exception as e:
-                self.log(f"Error uploading extraction script: {str(e)}")
+                    try:
+                        self.sftp.put(script_path, remote_script_path)
+                        self.sftp.chmod(remote_script_path, 0o755)  # Make executable
+                    except Exception as e:
+                        self.log(f"Error uploading extraction script: {str(e)}")
 
-            # Check if we need to stop before uploading zip
-            if stop_check and stop_check():
-                self.log("Upload stopped before uploading zip")
-                return total_files, transferred_files, error_count
+                    # Check if we need to stop before uploading zip
+                    if stop_check and stop_check():
+                        self.log("Upload stopped before uploading zip")
+                        return total_files, transferred_files, error_count
 
-            # Upload the zip file
-            remote_zip_path = f"{remote_dir}/_transfer_temp.zip"
-            self.log(f"Uploading compressed archive to {remote_zip_path}")
+                    # Upload the zip file
+                    remote_zip_path = f"{remote_dir}/_transfer_temp.zip"
+                    self.log(f"Uploading compressed archive to {remote_zip_path}")
+                    self.sftp.put(temp_zip_path, remote_zip_path)
+            else:
+                    # If we're not extracting, upload the zip file with a proper name
+                    # Create a zip filename based on the source directory name
+                    zip_filename = os.path.basename(os.path.normpath(local_dir)) + ".zip"
+                    remote_zip_path = os.path.join(remote_dir, zip_filename).replace("\\", "/")
+                    self.log(f"Uploading compressed archive to {remote_zip_path} (will not be extracted)")
+                    
+                    # Check if we need to stop before uploading zip
+                    if stop_check and stop_check():
+                        self.log("Upload stopped before uploading zip")
+                        return total_files, transferred_files, error_count
 
             # Upload with progress tracking
             def progress_callback(bytes_so_far):
@@ -2329,22 +2408,26 @@ if __name__ == "__main__":
                 self.log(f"Error uploading compressed archive: {str(e)}")
 
             # Update progress after upload
-            self.update_progress("Archive uploaded, starting extraction", 75)
+            if extract_archives:
+                self.update_progress("Archive uploaded, starting extraction", 75)
 
-            # Check if we need to stop before extracting
-            if stop_check and stop_check():
-                self.log("Upload stopped before extraction")
-                return total_files, transferred_files, error_count
+                # Check if we need to stop before extracting
+                if stop_check and stop_check():
+                    self.log("Upload stopped before extraction")
+                    return total_files, transferred_files, error_count
 
-            # Run the extraction script on the remote side
-            self.log("Extracting files on remote server...")
+                # Run the extraction script on the remote side
+                self.log("Extracting files on remote server...")
 
-            extract_cmd = f"python3 {remote_script_path} {remote_zip_path} {remote_dir}"
+                extract_cmd = f"python3 {remote_script_path} {remote_zip_path} {remote_dir}"
 
-            self.ssh.exec_command(f"chmod +x {remote_script_path}")
+                self.ssh.exec_command(f"chmod +x {remote_script_path}")
 
-            # Execute the script
-            self.ssh.exec_command(extract_cmd)
+                # Execute the script
+                self.ssh.exec_command(extract_cmd)
+            else:
+                self.update_progress("Archive uploaded successfully", 100)
+                self.log("Upload complete, zip file preserved on remote server.")
 
             # If we made it here, all files were transferred successfully
             transferred_files = len(files_to_compress) - error_count
@@ -2355,8 +2438,9 @@ if __name__ == "__main__":
             # Clean up remote temporary files
             try:
                 self.log("Cleaning up temporary files...")
-                self.sftp.remove(remote_zip_path)
-                self.sftp.remove(remote_script_path)
+                if extract_archives:
+                    self.sftp.remove(remote_script_path)
+                    self.sftp.remove(remote_zip_path)
             except Exception as e:
                 self.log(
                     f"Warning: Could not clean up remote temporary files: {str(e)}"
