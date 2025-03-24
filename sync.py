@@ -580,253 +580,92 @@ class FolderSync:
         stop_check=None,
         use_cache_only=False,
     ):
-        """List all files in the local directory with their MD5 hashes
+        """List files in local directory with metadata"""
+        results = {}
+        self.local_metadata = {}  # Reset local metadata
 
-        If use_cache_only is True, only files in the cache will be checked (faster but may miss new files)
-        """
-        if ignore_patterns is None:
-            ignore_patterns = []
-            
-        if folder_exclusions is None:
-            folder_exclusions = []
-            
-        result = {}
-        
-        # Log initial parameters
-        self.log("DEBUG: Starting local file scan with parameters:")
-        self.log(f"DEBUG: Local directory: {local_dir}")
-        self.log(f"DEBUG: Extension filters: {extension_filters}")
-        self.log(f"DEBUG: Filter mode: {filter_mode}")
-        self.log(f"DEBUG: Folder exclusions: {folder_exclusions}")
-        
-        # Try to load from cache first
-        cached_metadata = self.load_local_metadata()
-        
-        if use_cache_only and cached_metadata:
-            self.log(
-                "Using cached metadata only for local files (faster, but new files won't be detected)"
-            )
+        # Try to load cached metadata first
+        cached_metadata = {}
+        if use_cache_only or not calculate_hashes:
+            cached_metadata = self.load_local_metadata()
+            if use_cache_only and cached_metadata:
+                self.log("Using cached local metadata only")
+                self.local_metadata = cached_metadata
+                return cached_metadata
 
         try:
-            if not os.path.exists(local_dir):
-                self.log(f"Local directory {local_dir} does not exist")
-                return {}
-            
-            # First, check which files still exist and have the same metadata
-            cached_files_still_valid = set()
-            
-            if cached_metadata:
-                self.update_progress(status_message="Validating cached files", progress=0)
-            
-            for rel_path, cached_info in cached_metadata.items():
-                # Check if we should stop
+            for root, dirs, files in os.walk(local_dir):
                 if stop_check and stop_check():
-                    self.log("Local file scanning stopped by user request")
-                    return {}
+                    break
 
-                full_path = os.path.join(local_dir, rel_path.replace("/", os.path.sep))
-                
-                # Check if file still exists
-                if not os.path.exists(full_path):
-                    continue
-                
-                # Check if folder should be excluded
-                should_exclude = False
-                file_dir = os.path.dirname(rel_path)
-                
-                for exclusion in folder_exclusions:
-                    # Check if the file is in an excluded folder or subfolder
-                    if file_dir == exclusion or file_dir.startswith(exclusion + "/"):
-                        should_exclude = True
-                        self.log(f"DEBUG: Excluding cached file {rel_path} due to folder exclusion {exclusion}")
-                        break
-                
-                if should_exclude:
-                    continue
-                
-                # Check if extension filter applies
-                if extension_filters:
-                    file_matches_filter = False
-                    file_name = os.path.basename(rel_path)
-                    self.log(f"DEBUG: Checking file {file_name} against extension filters: {extension_filters}")
-                    for pattern in extension_filters:
-                        if fnmatch.fnmatch(file_name, pattern):
-                            file_matches_filter = True
-                            self.log(f"DEBUG: File {file_name} matches filter {pattern}")
-                            break
-                    
-                    # Skip based on filter mode
-                    if (filter_mode == "include" and not file_matches_filter) or (
-                        filter_mode == "exclude" and file_matches_filter
-                    ):
-                        self.log(f"DEBUG: Skipping file {file_name} due to extension filter")
-                        continue
-                
-                # Check if file has been modified
-                current_size = os.path.getsize(full_path)
-                current_mtime = os.path.getmtime(full_path)
-                
-                # If size and mtime match exactly, keep the cached info
-                if (
-                    abs(cached_info["size"] - current_size) < 2
-                    and abs(cached_info["mtime"] - current_mtime) < 2
-                ):
-                    result[rel_path] = cached_info.copy()
-                    cached_files_still_valid.add(rel_path)
-                    self.log(f"DEBUG: Using cached info for {rel_path}")
-                else:
-                    # File changed, need to update info but can reuse path
-                    result[rel_path] = {
-                        "path": full_path,
-                        "hash": None,  # Hash is invalidated
-                        "size": current_size,
-                        "mtime": current_mtime,
-                    }
-                    cached_files_still_valid.add(rel_path)
-                    self.log(f"DEBUG: Updated info for modified file {rel_path}")
-            
-            # If use_cache_only is True and no files match the filter, fall
-            # back to full scan
-            if use_cache_only and not result:
-                self.log(
-                    "WARNING: No files in the local cache match the current filter settings"
-                )
-                self.log(
-                    "Falling back to full directory scan to ensure files are found"
-                )
-                use_cache_only = False
+                # Update scanning status
+                rel_root = os.path.relpath(root, local_dir)
+                if rel_root == ".":
+                    rel_root = "/"
+                self.update_status(f"Scanning local directory: {rel_root}")
 
-            # If use_cache_only is True, skip the full directory scan
-            if not use_cache_only:
-                # Now scan for new files
-                total_files_found = 0
-                total_files_included = 0
-                
-                for root, dirs, files in os.walk(local_dir):
-                    # Calculate relative path for display and processing
-                    rel_root = os.path.relpath(root, local_dir).replace("\\", "/")
-                    display_path = rel_root if rel_root != "." else "/"
-                    
-                    # Update progress with current directory
-                    self.update_progress(
-                        status_message=f"Scanning local files ({total_files_found} found)",
-                        current_directory=display_path
-                    )
-                    
-                    # Check if we should stop
+                # Apply folder exclusions
+                if folder_exclusions:
+                    dirs[:] = [d for d in dirs if d not in folder_exclusions]
+
+                for file in files:
                     if stop_check and stop_check():
-                        self.log(
-                            "Local file scanning stopped by user request during directory walk"
-                        )
                         break
 
-                    # Remove excluded folders from dirs to prevent walking them
-                    dirs_to_remove = []
-                    
-                    if rel_root == ".":
-                        rel_root = ""
-                        
-                    for i, d in enumerate(dirs):
-                        # Check if directory should be excluded
-                        for exclusion in folder_exclusions:
-                            dir_path = os.path.join(rel_root, d).replace("\\", "/")
-                            if (
-                                dir_path == exclusion
-                                or dir_path.startswith(exclusion + "/")
-                                or d == exclusion
-                            ):
-                                dirs_to_remove.append(i)
-                                self.log(f"DEBUG: Excluding directory {dir_path}")
-                                break
-                                
-                        # Also check if directory matches any ignore patterns
-                        for pattern in ignore_patterns:
-                            if fnmatch.fnmatch(d, pattern):
-                                if i not in dirs_to_remove:
-                                    dirs_to_remove.append(i)
-                                    self.log(f"DEBUG: Excluding directory {d} due to ignore pattern {pattern}")
-                                break
-                
-                    # Remove excluded directories from the list (in reverse order
-                    # to maintain indices)
-                    for i in sorted(dirs_to_remove, reverse=True):
-                        del dirs[i]
-                    
-                    # Process files
-                    for file in files:
-                        total_files_found += 1
-                        # Check if file should be ignored
-                        skip_file = False
-                        for pattern in ignore_patterns:
-                            if fnmatch.fnmatch(file, pattern):
-                                skip_file = True
-                                self.log(f"DEBUG: Skipping ignored file {file}")
-                                break
-                        
-                        if skip_file:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, local_dir)
+
+                    # Check ignore patterns
+                    if ignore_patterns and any(fnmatch(rel_path, p) for p in ignore_patterns):
+                        continue
+
+                    # Apply extension filters
+                    if extension_filters:
+                        file_ext = os.path.splitext(file)[1].lower()
+                        if filter_mode == "include" and not any(
+                            file_ext.endswith(ext.lower()) for ext in extension_filters
+                        ):
+                            self.log(f"Skipping {rel_path} - extension not in include list")
                             continue
-                        
-                        # Apply extension filtering if provided
-                        if extension_filters:
-                            file_matches_filter = False
-                            self.log(f"DEBUG: Checking file {file} against extension filters: {extension_filters}")
-                            for pattern in extension_filters:
-                                if fnmatch.fnmatch(file, pattern):
-                                    file_matches_filter = True
-                                    self.log(f"DEBUG: File {file} matches filter {pattern}")
-                                    break
-                            
-                            # Skip based on filter mode
-                            if (filter_mode == "include" and not file_matches_filter) or (
-                                filter_mode == "exclude" and file_matches_filter
-                            ):
-                                self.log(f"DEBUG: Skipping file {file} due to extension filter")
-                                continue
-                            
-                        full_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(full_path, local_dir)
-                        # Convert Windows path separators to Unix
-                        rel_path = rel_path.replace("\\", "/")
-                        
-                        # If we already processed this file from cache, skip it
-                        if rel_path in cached_files_still_valid:
+                        elif filter_mode == "exclude" and any(
+                            file_ext.endswith(ext.lower()) for ext in extension_filters
+                        ):
+                            self.log(f"Skipping {rel_path} - extension in exclude list")
                             continue
-                        
-                        # This is a new file, add it to the result
-                        result[rel_path] = {
-                            "path": full_path,
-                            "hash": None,  # We'll calculate hashes later
-                            "size": os.path.getsize(full_path),
-                            "mtime": os.path.getmtime(full_path),
+
+                    try:
+                        stat_info = os.stat(full_path)
+                        file_info = {
+                            "path": rel_path,
+                            "size": stat_info.st_size,
+                            "mtime": stat_info.st_mtime,
+                            "hash": None,
                         }
-                        total_files_included += 1
-                        self.log(f"DEBUG: Added new file {rel_path}")
 
-                self.log(f"DEBUG: Total files found: {total_files_found}")
-                self.log(f"DEBUG: Files included after filtering: {total_files_included}")
+                        # Check if we have valid cached metadata
+                        cached_info = cached_metadata.get(rel_path)
+                        if cached_info and abs(cached_info["mtime"] - file_info["mtime"]) < 2:
+                            file_info["hash"] = cached_info["hash"]
+                            self.log(f"Using cached hash for {rel_path}")
+                        elif calculate_hashes:
+                            file_info["hash"] = self._calculate_file_hash(full_path)
+                            self.log(f"Calculated new hash for {rel_path}")
 
-            if use_cache_only:
-                self.log(f"Found {len(result)} valid files in local cache")
-            else:
-                self.log(
-                    f"Found {len(result)} files in local directory (of which {len(cached_files_still_valid)} from cache)"
-                )
-            
-            # Calculate hashes in parallel if requested
+                        results[rel_path] = file_info
+                        self.local_metadata[rel_path] = file_info
+
+                    except Exception as e:
+                        self.log(f"Error processing local file {rel_path}: {str(e)}")
+
+            # Save metadata if we calculated any new hashes
             if calculate_hashes:
-                self.log("Pre-calculating hashes for local files...")
-                self.update_progress(status_message="Calculating file hashes", progress=75)
-                self.calculate_hashes_parallel(
-                    result, is_remote=False, stop_check=stop_check
-                )
-            
-            # Store the local metadata for later saving
-            self.local_metadata = result
-            
-            return result
-            
+                self.save_local_metadata(self.local_metadata)
+                self.log(f"Saved metadata for {len(self.local_metadata)} local files")
+
+            return results
+
         except Exception as e:
-            self.log(f"Error scanning local directory: {str(e)}")
+            self.log(f"Error listing local files: {str(e)}")
             return {}
     
     def list_remote_files(
@@ -840,264 +679,92 @@ class FolderSync:
         stop_check=None,
         use_cache_only=False,
     ):
-        """List all files in the remote directory with their MD5 hashes
+        """List files in remote directory with metadata"""
+        results = {}
+        self.remote_metadata = {}  # Reset remote metadata
 
-        If use_cache_only is True, only files in the cache will be checked (faster but may miss new files)
-        """
-        if ignore_patterns is None:
-            ignore_patterns = []
-            
-        if folder_exclusions is None:
-            folder_exclusions = []
-            
-        result = {}
-        
-        # Log initial parameters
-        self.log("DEBUG: Starting remote file scan with parameters:")
-        self.log(f"DEBUG: Remote directory: {remote_dir}")
-        self.log(f"DEBUG: Extension filters: {extension_filters}")
-        self.log(f"DEBUG: Filter mode: {filter_mode}")
-        self.log(f"DEBUG: Folder exclusions: {folder_exclusions}")
-        
-        # Format extension filters to ensure they include the dot
-        if extension_filters:
-            formatted_filters = []
-            for ext in extension_filters:
-                if ext.startswith('*.'):
-                    formatted_filters.append(ext)
-                elif ext.startswith('.'):
-                    formatted_filters.append(f"*{ext}")
-                else:
-                    formatted_filters.append(f"*.{ext}")
-            extension_filters = formatted_filters
-            self.log(f"DEBUG: Formatted extension filters: {extension_filters}")
-        
-        # Try to load from cache first
-        cached_metadata = self.load_remote_metadata()
-        
-        if use_cache_only and cached_metadata:
-            self.log(
-                "Using cached metadata only for remote files (faster, but new files won't be detected)"
-            )
+        # Try to load cached metadata first
+        cached_metadata = {}
+        if use_cache_only or not calculate_hashes:
+            cached_metadata = self.load_remote_metadata()
+            if use_cache_only and cached_metadata:
+                self.log("Using cached remote metadata only")
+                self.remote_metadata = cached_metadata
+                return cached_metadata
 
         try:
-            # First, check which files still exist and have the same metadata
-            cached_files_still_valid = set()
-            
-            if cached_metadata:
-                self.update_progress(status_message="Validating cached files", progress=0)
-            
-            for rel_path, cached_info in cached_metadata.items():
-                # Check if we should stop
+            for root, dirs, files in self.sftp_walk(remote_dir):
                 if stop_check and stop_check():
-                    self.log("Remote file scanning stopped by user request")
-                    return {}
+                    break
 
-                # Check if folder should be excluded
-                should_exclude = False
-                file_dir = os.path.dirname(rel_path)
-                
-                for exclusion in folder_exclusions:
-                    # Check if the file is in an excluded folder or subfolder
-                    if file_dir == exclusion or file_dir.startswith(exclusion + "/"):
-                        should_exclude = True
-                        self.log(f"DEBUG: Excluding cached file {rel_path} due to folder exclusion {exclusion}")
-                        break
-                
-                if should_exclude:
-                    continue
-                
-                # Check if extension filter applies
-                if extension_filters:
-                    file_matches_filter = False
-                    file_name = os.path.basename(rel_path)
-                    self.log(f"DEBUG: Checking file {file_name} against extension filters: {extension_filters}")
-                    for pattern in extension_filters:
-                        if fnmatch.fnmatch(file_name.lower(), pattern.lower()):
-                            file_matches_filter = True
-                            self.log(f"DEBUG: File {file_name} matches filter {pattern}")
-                            break
-                    
-                    # Skip based on filter mode
-                    if (filter_mode == "include" and not file_matches_filter) or (
-                        filter_mode == "exclude" and file_matches_filter
-                    ):
-                        self.log(f"DEBUG: Skipping file {file_name} due to extension filter")
-                        continue
-                
-                # Check if file still exists
-                try:
-                    file_info = self.sftp.lstat(os.path.join(remote_dir, rel_path))
-                except FileNotFoundError:
-                    continue
-                
-                # If size and mtime match exactly, keep the cached info
-                if (
-                    abs(cached_info["size"] - file_info.st_size) < 2
-                    and abs(cached_info["mtime"] - file_info.st_mtime) < 2
-                ):
-                    result[rel_path] = cached_info.copy()
-                    cached_files_still_valid.add(rel_path)
-                    self.log(f"DEBUG: Using cached info for {rel_path}")
-                else:
-                    # File changed, need to update info but can reuse path
-                    result[rel_path] = {
-                        "path": os.path.join(remote_dir, rel_path),
-                        "hash": None,  # Hash is invalidated
-                        "size": file_info.st_size,
-                        "mtime": file_info.st_mtime,
-                    }
-                    cached_files_still_valid.add(rel_path)
-                    self.log(f"DEBUG: Updated info for modified file {rel_path}")
-            
-            # If use_cache_only is True and no files match the filter, fall
-            # back to full scan
-            if use_cache_only and not result:
-                self.log(
-                    "WARNING: No files in the remote cache match the current filter settings"
-                )
-                self.log(
-                    "Falling back to full directory scan to ensure files are found"
-                )
-                use_cache_only = False
+                # Update scanning status
+                rel_root = os.path.relpath(root, remote_dir)
+                if rel_root == ".":
+                    rel_root = "/"
+                self.update_status(f"Scanning remote directory: {rel_root}")
 
-            # If use_cache_only is True, skip the full directory scan
-            if not use_cache_only:
-                # Now scan for new files
-                total_files_found = 0
-                total_files_included = 0
-                
-                for root, dirs, files in self.sftp_walk(remote_dir):
-                    # Calculate relative path for display and processing
-                    rel_root = os.path.relpath(root, remote_dir).replace("\\", "/")
-                    display_path = rel_root if rel_root != "." else "/"
-                    
-                    # Update progress with current directory
-                    self.update_progress(
-                        status_message=f"Scanning remote files ({total_files_found} found)",
-                        current_directory=display_path
-                    )
-                    
-                    # Check if we should stop
+                # Apply folder exclusions
+                if folder_exclusions:
+                    dirs[:] = [d for d in dirs if d not in folder_exclusions]
+
+                for file in files:
                     if stop_check and stop_check():
-                        self.log(
-                            "Remote file scanning stopped by user request during directory walk"
-                        )
                         break
 
-                    # Remove excluded folders from dirs to prevent walking them
-                    dirs_to_remove = []
-                    
-                    if rel_root == ".":
-                        rel_root = ""
-                        
-                    for i, d in enumerate(dirs):
-                        # Check if directory should be excluded
-                        for exclusion in folder_exclusions:
-                            dir_path = os.path.join(rel_root, d).replace("\\", "/")
-                            if (
-                                dir_path == exclusion
-                                or dir_path.startswith(exclusion + "/")
-                                or d == exclusion
-                            ):
-                                dirs_to_remove.append(i)
-                                self.log(f"DEBUG: Excluding directory {dir_path}")
-                                break
-                                
-                        # Also check if directory matches any ignore patterns
-                        for pattern in ignore_patterns:
-                            if fnmatch.fnmatch(d, pattern):
-                                if i not in dirs_to_remove:
-                                    dirs_to_remove.append(i)
-                                    self.log(f"DEBUG: Excluding directory {d} due to ignore pattern {pattern}")
-                                break
-                
-                    # Remove excluded directories from the list (in reverse order
-                    # to maintain indices)
-                    for i in sorted(dirs_to_remove, reverse=True):
-                        del dirs[i]
-                    
-                    # Process files
-                    for file in files:
-                        total_files_found += 1
-                        # Check if file should be ignored
-                        skip_file = False
-                        for pattern in ignore_patterns:
-                            if fnmatch.fnmatch(file, pattern):
-                                skip_file = True
-                                self.log(f"DEBUG: Skipping ignored file {file}")
-                                break
-                        
-                        if skip_file:
+                    full_path = os.path.join(root, file).replace("\\", "/")
+                    rel_path = os.path.relpath(full_path, remote_dir).replace("\\", "/")
+
+                    # Check ignore patterns
+                    if ignore_patterns and any(fnmatch(rel_path, p) for p in ignore_patterns):
+                        continue
+
+                    # Apply extension filters
+                    if extension_filters:
+                        file_ext = os.path.splitext(file)[1].lower()
+                        if filter_mode == "include" and not any(
+                            file_ext.endswith(ext.lower()) for ext in extension_filters
+                        ):
+                            self.log(f"Skipping {rel_path} - extension not in include list")
                             continue
-                        
-                        # Apply extension filtering if provided
-                        if extension_filters:
-                            file_matches_filter = False
-                            self.log(f"DEBUG: Checking file {file} against extension filters: {extension_filters}")
-                            for pattern in extension_filters:
-                                if fnmatch.fnmatch(file.lower(), pattern.lower()):
-                                    file_matches_filter = True
-                                    self.log(f"DEBUG: File {file} matches filter {pattern}")
-                                    break
-                            
-                            # Skip based on filter mode
-                            if (filter_mode == "include" and not file_matches_filter) or (
-                                filter_mode == "exclude" and file_matches_filter
-                            ):
-                                self.log(f"DEBUG: Skipping file {file} due to extension filter")
-                                continue
-                            
-                        full_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(full_path, remote_dir)
-                        # Convert Windows path separators to Unix
-                        rel_path = rel_path.replace("\\", "/")
-                        
-                        # If we already processed this file from cache, skip it
-                        if rel_path in cached_files_still_valid:
+                        elif filter_mode == "exclude" and any(
+                            file_ext.endswith(ext.lower()) for ext in extension_filters
+                        ):
+                            self.log(f"Skipping {rel_path} - extension in exclude list")
                             continue
-                        
-                        # Get file info
-                        try:
-                            file_info = self.sftp.lstat(full_path)
-                        except FileNotFoundError:
-                            continue
-                        
-                        # This is a new file, add it to the result
-                        result[rel_path] = {
-                            "path": full_path,
-                            "hash": None,  # We'll calculate hashes later
-                            "size": file_info.st_size,
-                            "mtime": file_info.st_mtime,
+
+                    try:
+                        stat_info = self.sftp.lstat(full_path)
+                        file_info = {
+                            "path": rel_path,
+                            "size": stat_info.st_size,
+                            "mtime": stat_info.st_mtime,
+                            "hash": None,
                         }
-                        total_files_included += 1
-                        self.log(f"DEBUG: Added new file {rel_path}")
 
-                self.log(f"DEBUG: Total files found: {total_files_found}")
-                self.log(f"DEBUG: Files included after filtering: {total_files_included}")
+                        # Check if we have valid cached metadata
+                        cached_info = cached_metadata.get(rel_path)
+                        if cached_info and abs(cached_info["mtime"] - file_info["mtime"]) < 2:
+                            file_info["hash"] = cached_info["hash"]
+                            self.log(f"Using cached hash for {rel_path}")
+                        elif calculate_hashes:
+                            file_info["hash"] = self._calculate_remote_file_hash(full_path)
+                            self.log(f"Calculated new hash for {rel_path}")
 
-            if use_cache_only:
-                self.log(f"Found {len(result)} valid files in remote cache")
-            else:
-                self.log(
-                    f"Found {len(result)} files in remote directory (of which {len(cached_files_still_valid)} from cache)"
-                )
-            
-            # Calculate hashes in parallel if requested
+                        results[rel_path] = file_info
+                        self.remote_metadata[rel_path] = file_info
+
+                    except Exception as e:
+                        self.log(f"Error processing remote file {rel_path}: {str(e)}")
+
+            # Save metadata if we calculated any new hashes
             if calculate_hashes:
-                self.log("Pre-calculating hashes for remote files...")
-                self.update_progress(status_message="Calculating file hashes", progress=75)
-                self.calculate_hashes_parallel(
-                    result, is_remote=True, stop_check=stop_check
-                )
-            
-            # Store the remote metadata for later saving
-            self.remote_metadata = result
-            
-            return result
-            
+                self.save_remote_metadata(self.remote_metadata)
+                self.log(f"Saved metadata for {len(self.remote_metadata)} remote files")
+
+            return results
+
         except Exception as e:
-            self.log(f"Error scanning remote directory: {str(e)}")
+            self.log(f"Error listing remote files: {str(e)}")
             return {}
     
     def sync_with_existing_connection(
@@ -1599,106 +1266,58 @@ class FolderSync:
         self.log(f"DEBUG: Successfully synced {files_synced}/{total_to_sync} files to local")
         return files_synced
 
-    def _files_differ(self, file1_info, file2_info, content_only_compare=False):
+    def _files_differ(
+        self,
+        file1_info,
+        file2_info,
+        content_only_compare=False,
+        force_sync=False,
+    ):
+        """Compare two files to determine if they differ
+        
+        Args:
+            file1_info: Dictionary with file1's metadata
+            file2_info: Dictionary with file2's metadata
+            content_only_compare: If True, only compare file hashes
+            force_sync: If True, always consider files different
+            
+        Returns:
+            True if files differ, False if they are the same
         """
-        Determine if two files are different based on the comparison method
-
-        file1_info: Dictionary containing file metadata
-        file2_info: Dictionary containing file metadata
-        content_only_compare: Whether to compare by content hash only
-
-        Returns True if files are different, False if they are the same
-        """
-        # If either file doesn't exist, they differ
-        if not file1_info or not file2_info:
+        if force_sync:
             return True
 
-        # For content-only comparison, only compare hashes
+        # Log comparison parameters for debugging
+        self.log(f"Comparing files:")
+        self.log(f"File 1: size={file1_info['size']}, mtime={file1_info['mtime']}, hash={file1_info.get('hash')}")
+        self.log(f"File 2: size={file2_info['size']}, mtime={file2_info['mtime']}, hash={file2_info.get('hash')}")
+        
         if content_only_compare:
-            # Calculate hashes if they don't exist
-            if file1_info.get("hash") is None and "path" in file1_info:
-                try:
-                    file1_info["hash"] = self.get_file_hash(file1_info["path"])
-                except Exception as e:
-                    self.log(f"Warning: Could not calculate hash for {file1_info['path']}: {str(e)}")
-                    
-            if file2_info.get("hash") is None and "path" in file2_info:
-                try:
-                    if hasattr(self, "sftp") and self.sftp:
-                        file2_info["hash"] = self.get_remote_file_hash(self.sftp, file2_info["path"])
-                    else:
-                        file2_info["hash"] = self.get_file_hash(file2_info["path"])
-                except Exception as e:
-                    self.log(f"Warning: Could not calculate hash for {file2_info['path']}: {str(e)}")
-            
-            # If we still don't have hashes, fall back to size and time comparison
+            # For content-only comparison, we need valid hashes
             if file1_info.get("hash") is None or file2_info.get("hash") is None:
-                # Fall back to size and time comparison
-                size_same = file1_info["size"] == file2_info["size"]
-                time_same = abs(file1_info["mtime"] - file2_info["mtime"]) < 5
-                return not (size_same and time_same)
+                # If either hash is missing, fall back to size/time comparison
+                self.log("Missing hash(es), falling back to size/time comparison")
+                size_differs = abs(file1_info["size"] - file2_info["size"]) >= 2
+                time_differs = abs(file1_info["mtime"] - file2_info["mtime"]) >= 2
+                return size_differs or time_differs
             
             # Compare hashes
-            return file1_info["hash"] != file2_info["hash"]
+            files_differ = file1_info["hash"] != file2_info["hash"]
+            self.log(f"Hash comparison result: {'different' if files_differ else 'same'}")
+            return files_differ
+            
         else:
-            # For .c and .h files, always verify with hash
-            file_path = file1_info.get("path", "")
-            if file_path.endswith((".c", ".h")):
-                # Calculate hashes if needed
-                if file1_info.get("hash") is None:
-                    if "path" in file1_info:
-                        try:
-                            file1_info["hash"] = self.get_file_hash(file1_info["path"])
-                        except Exception as e:
-                            self.log(f"Warning: Could not calculate hash for {file1_info['path']}: {str(e)}")
-                            
-                if file2_info.get("hash") is None:
-                    if "path" in file2_info:
-                        try:
-                            if hasattr(self, "sftp") and self.sftp:
-                                file2_info["hash"] = self.get_remote_file_hash(
-                                    self.sftp, file2_info["path"]
-                                )
-                            else:
-                                file2_info["hash"] = self.get_file_hash(file2_info["path"])
-                        except Exception as e:
-                            self.log(f"Warning: Could not calculate hash for {file2_info['path']}: {str(e)}")
-
-                # If we have hashes, use them for comparison
-                if (
-                    file1_info.get("hash") is not None
-                    and file2_info.get("hash") is not None
-                ):
-                    # Log for main.c file to debug
-                    if "main.c" in file_path:
-                        self.log(
-                            f"DEBUG: Hash comparison for {file_path}: {file1_info['hash']} vs {file2_info['hash']}"
-                        )
-                        self.log(
-                            f"DEBUG: Hashes differ: {file1_info['hash'] != file2_info['hash']}"
-                        )
-
-                    return file1_info["hash"] != file2_info["hash"]
-                else:
-                    # Fall back to size/time comparison if we couldn't get hashes
-                    size_same = file1_info["size"] == file2_info["size"]
-                    time_same = abs(file1_info["mtime"] - file2_info["mtime"]) < 5
-                    return not (size_same and time_same)
-
-            # Quick comparison based on size and time
-            size_same = file1_info["size"] == file2_info["size"]
-            # Increased from 1 to 5 seconds
-            time_same = abs(file1_info["mtime"] - file2_info["mtime"]) < 5
-
-            # Log for main.c file to debug
-            if "main.c" in file1_info.get("path", ""):
-                self.log(f"DEBUG: Quick comparison for {file1_info['path']}")
-                self.log(f"DEBUG: Size same: {size_same}, Time same: {time_same}")
-                self.log(f"DEBUG: Size: {file1_info['size']} vs {file2_info['size']}")
-                self.log(f"DEBUG: Time: {file1_info['mtime']} vs {file2_info['mtime']}")
-
-            # If size and time match, files are the same
-            return not (size_same and time_same)
+            # Quick comparison using size and mtime
+            # Allow for small floating point differences in mtime (2 seconds)
+            # and small size differences (2 bytes) to account for system variations
+            size_differs = abs(file1_info["size"] - file2_info["size"]) >= 2
+            time_differs = abs(file1_info["mtime"] - file2_info["mtime"]) >= 2
+            
+            self.log(f"Size difference: {abs(file1_info['size'] - file2_info['size'])} bytes")
+            self.log(f"Time difference: {abs(file1_info['mtime'] - file2_info['mtime'])} seconds")
+            
+            # If either size or time differs significantly, files are considered different
+            return size_differs or time_differs
 
     def _create_remote_dirs(self, sftp, path):
         """
@@ -2638,3 +2257,33 @@ if __name__ == "__main__":
             # Recursively walk through subdirectories
             for x in self.sftp_walk(path):
                 yield x
+
+    def _calculate_file_hash(self, file_path, chunk_size=8192):
+        """Calculate MD5 hash of a local file"""
+        try:
+            md5_hash = hashlib.md5()
+            with open(file_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    md5_hash.update(chunk)
+            return md5_hash.hexdigest()
+        except Exception as e:
+            self.log(f"Error calculating hash for {file_path}: {str(e)}")
+            return None
+
+    def _calculate_remote_file_hash(self, remote_path, chunk_size=8192):
+        """Calculate MD5 hash of a remote file"""
+        try:
+            md5_hash = hashlib.md5()
+            with self.sftp.open(remote_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    md5_hash.update(chunk)
+            return md5_hash.hexdigest()
+        except Exception as e:
+            self.log(f"Error calculating hash for remote file {remote_path}: {str(e)}")
+            return None
