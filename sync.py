@@ -506,13 +506,23 @@ class FolderSync:
     def load_local_metadata(self):
         """Load local file metadata from cache file"""
         if not self.local_cache_file or not os.path.exists(self.local_cache_file):
+            self.log("DEBUG: No local metadata cache file found")
             return {}
         
         try:
             with open(self.local_cache_file, "r") as f:
                 metadata = json.load(f)
-            self.log(f"Loaded metadata for {len(metadata)} local files from cache")
-            return metadata
+                
+            # Validate the loaded metadata
+            valid_metadata = {}
+            for rel_path, info in metadata.items():
+                if all(key in info for key in ["path", "size", "mtime", "hash"]):
+                    valid_metadata[rel_path] = info
+                else:
+                    self.log(f"DEBUG: Skipping invalid metadata entry for {rel_path}")
+                    
+            self.log(f"DEBUG: Loaded metadata for {len(valid_metadata)} local files from cache")
+            return valid_metadata
         except Exception as e:
             self.log(f"Error loading local metadata cache: {str(e)}")
             return {}
@@ -520,6 +530,7 @@ class FolderSync:
     def save_local_metadata(self, metadata):
         """Save local file metadata to cache file"""
         if not self.local_cache_file:
+            self.log("DEBUG: No local metadata cache file specified")
             return False
         
         try:
@@ -528,9 +539,23 @@ class FolderSync:
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
                 
+            # Validate and clean metadata before saving
+            valid_metadata = {}
+            for rel_path, info in metadata.items():
+                if all(key in info for key in ["path", "size", "mtime"]):
+                    valid_metadata[rel_path] = {
+                        "path": info["path"],
+                        "size": info["size"],
+                        "mtime": info["mtime"],
+                        "hash": info.get("hash")  # Hash might be None
+                    }
+                else:
+                    self.log(f"DEBUG: Skipping invalid metadata for {rel_path}")
+                    
             with open(self.local_cache_file, "w") as f:
-                json.dump(metadata, f)
-            self.log(f"Saved metadata for {len(metadata)} local files to cache")
+                json.dump(valid_metadata, f)
+                
+            self.log(f"DEBUG: Saved metadata for {len(valid_metadata)} local files to cache")
             return True
         except Exception as e:
             self.log(f"Error saving local metadata cache: {str(e)}")
@@ -539,13 +564,23 @@ class FolderSync:
     def load_remote_metadata(self):
         """Load remote file metadata from cache file"""
         if not self.remote_cache_file or not os.path.exists(self.remote_cache_file):
+            self.log("DEBUG: No remote metadata cache file found")
             return {}
         
         try:
             with open(self.remote_cache_file, "r") as f:
                 metadata = json.load(f)
-            self.log(f"Loaded metadata for {len(metadata)} remote files from cache")
-            return metadata
+                
+            # Validate the loaded metadata
+            valid_metadata = {}
+            for rel_path, info in metadata.items():
+                if all(key in info for key in ["path", "size", "mtime", "hash"]):
+                    valid_metadata[rel_path] = info
+                else:
+                    self.log(f"DEBUG: Skipping invalid metadata entry for {rel_path}")
+                    
+            self.log(f"DEBUG: Loaded metadata for {len(valid_metadata)} remote files from cache")
+            return valid_metadata
         except Exception as e:
             self.log(f"Error loading remote metadata cache: {str(e)}")
             return {}
@@ -553,6 +588,7 @@ class FolderSync:
     def save_remote_metadata(self, metadata):
         """Save remote file metadata to cache file"""
         if not self.remote_cache_file:
+            self.log("DEBUG: No remote metadata cache file specified")
             return False
         
         try:
@@ -561,9 +597,23 @@ class FolderSync:
             if not os.path.exists(cache_dir):
                 os.makedirs(cache_dir)
                 
+            # Validate and clean metadata before saving
+            valid_metadata = {}
+            for rel_path, info in metadata.items():
+                if all(key in info for key in ["path", "size", "mtime"]):
+                    valid_metadata[rel_path] = {
+                        "path": info["path"],
+                        "size": info["size"],
+                        "mtime": info["mtime"],
+                        "hash": info.get("hash")  # Hash might be None
+                    }
+                else:
+                    self.log(f"DEBUG: Skipping invalid metadata for {rel_path}")
+                    
             with open(self.remote_cache_file, "w") as f:
-                json.dump(metadata, f)
-            self.log(f"Saved metadata for {len(metadata)} remote files to cache")
+                json.dump(valid_metadata, f)
+                
+            self.log(f"DEBUG: Saved metadata for {len(valid_metadata)} remote files to cache")
             return True
         except Exception as e:
             self.log(f"Error saving remote metadata cache: {str(e)}")
@@ -594,6 +644,19 @@ class FolderSync:
                 return cached_metadata
 
         try:
+            # Normalize extension filters - ensure they start with a dot and remove any duplicates
+            if extension_filters:
+                normalized_filters = set()
+                for ext in extension_filters:
+                    # Remove any leading/trailing whitespace
+                    ext = ext.strip()
+                    # Add a dot if it doesn't start with one
+                    if not ext.startswith('.'):
+                        ext = '.' + ext
+                    normalized_filters.add(ext.lower())
+                extension_filters = list(normalized_filters)
+                self.log(f"DEBUG: Normalized extension filters: {extension_filters}")
+
             for root, dirs, files in os.walk(local_dir):
                 if stop_check and stop_check():
                     break
@@ -622,16 +685,18 @@ class FolderSync:
                     # Apply extension filters
                     if extension_filters:
                         file_ext = os.path.splitext(file)[1].lower()
-                        if filter_mode == "include" and not any(
-                            file_ext.endswith(ext.lower()) for ext in extension_filters
-                        ):
-                            self.log(f"Skipping {rel_path} - extension not in include list")
-                            continue
-                        elif filter_mode == "exclude" and any(
-                            file_ext.endswith(ext.lower()) for ext in extension_filters
-                        ):
-                            self.log(f"Skipping {rel_path} - extension in exclude list")
-                            continue
+                        # Add a dot if it doesn't have one
+                        if file_ext and not file_ext.startswith('.'):
+                            file_ext = '.' + file_ext
+                            
+                        if filter_mode == "include":
+                            if file_ext not in extension_filters:
+                                self.log(f"Skipping {rel_path} - extension {file_ext} not in include list {extension_filters}")
+                                continue
+                        elif filter_mode == "exclude":
+                            if file_ext in extension_filters:
+                                self.log(f"Skipping {rel_path} - extension {file_ext} in exclude list {extension_filters}")
+                                continue
 
                     try:
                         stat_info = os.stat(full_path)
@@ -693,6 +758,19 @@ class FolderSync:
                 return cached_metadata
 
         try:
+            # Normalize extension filters - ensure they start with a dot and remove any duplicates
+            if extension_filters:
+                normalized_filters = set()
+                for ext in extension_filters:
+                    # Remove any leading/trailing whitespace
+                    ext = ext.strip()
+                    # Add a dot if it doesn't start with one
+                    if not ext.startswith('.'):
+                        ext = '.' + ext
+                    normalized_filters.add(ext.lower())
+                extension_filters = list(normalized_filters)
+                self.log(f"DEBUG: Normalized extension filters: {extension_filters}")
+
             for root, dirs, files in self.sftp_walk(remote_dir):
                 if stop_check and stop_check():
                     break
@@ -721,16 +799,18 @@ class FolderSync:
                     # Apply extension filters
                     if extension_filters:
                         file_ext = os.path.splitext(file)[1].lower()
-                        if filter_mode == "include" and not any(
-                            file_ext.endswith(ext.lower()) for ext in extension_filters
-                        ):
-                            self.log(f"Skipping {rel_path} - extension not in include list")
-                            continue
-                        elif filter_mode == "exclude" and any(
-                            file_ext.endswith(ext.lower()) for ext in extension_filters
-                        ):
-                            self.log(f"Skipping {rel_path} - extension in exclude list")
-                            continue
+                        # Add a dot if it doesn't have one
+                        if file_ext and not file_ext.startswith('.'):
+                            file_ext = '.' + file_ext
+                            
+                        if filter_mode == "include":
+                            if file_ext not in extension_filters:
+                                self.log(f"Skipping {rel_path} - extension {file_ext} not in include list {extension_filters}")
+                                continue
+                        elif filter_mode == "exclude":
+                            if file_ext in extension_filters:
+                                self.log(f"Skipping {rel_path} - extension {file_ext} in exclude list {extension_filters}")
+                                continue
 
                     try:
                         stat_info = self.sftp.lstat(full_path)
@@ -785,186 +865,211 @@ class FolderSync:
         force_sync=False,
         use_cache_only=False,
     ):
-        """Sync files using existing SSH and SFTP connections
-
-        If use_cache_only is True, only files in the cache will be checked (faster but may miss new files)
         """
-        self.update_status("Starting synchronization with existing connection...")
+        Sync files using an existing SFTP connection
         
-        # Starting timestamp for the operation
-        start_time = time.time()
-
-        # Store SFTP client for use in other methods
-        self.sftp = sftp_client
-
-        # Local and remote directory should exist
-        if not os.path.isdir(local_dir):
-            self.log(f"Local directory does not exist: {local_dir}")
-            return False
-
-        # Ensure local directory path ends with a slash for consistent path
-        # manipulation
-        if not local_dir.endswith(os.path.sep):
-            local_dir = local_dir + os.path.sep
-
-        # Ensure remote directory path ends with a slash for consistent path
-        # manipulation
-        if not remote_dir.endswith("/"):
-            remote_dir = remote_dir + "/"
-
-        # Try to ensure remote directory exists
+        Args:
+            ssh_client: Paramiko SSH client object
+            sftp_client: Paramiko SFTP client object
+            local_dir: Local directory path
+            remote_dir: Remote directory path
+            bidirectional: Whether to sync in both directions
+            sync_mode: Direction of sync ('both', 'to_remote', 'to_local')
+            extension_filters: List of file extensions to filter
+            filter_mode: How to apply extension filters ('include' or 'exclude')
+            stop_check: Function to check if sync should be stopped
+            folder_exclusions: List of folders to exclude
+            content_only_compare: Whether to compare only file contents
+            transfer_method: Method to use for file transfer ('sftp' or 'scp')
+            verbose_logging: Whether to log detailed information
+            force_sync: Whether to force sync all files
+            use_cache_only: Whether to only use cached metadata
+            
+        Returns:
+            True if sync was successful, False otherwise
+        """
         try:
-            sftp_client.stat(remote_dir)
-        except FileNotFoundError:
-            try:
-                self.log(f"Remote directory does not exist, creating: {remote_dir}")
-                sftp_client.mkdir(remote_dir)
-            except Exception as e:
-                self.log(f"Failed to create remote directory: {str(e)}")
+            # Store SFTP client for use in other methods
+            self.sftp = sftp_client
+            
+            # Local and remote directory should exist
+            if not os.path.isdir(local_dir):
+                self.log(f"Local directory does not exist: {local_dir}")
                 return False
 
-        # Check if stop was requested after directory creation
-        if stop_check and stop_check():
-            self.log("Synchronization stopped before file listing")
-            return False
+            # Ensure local directory path ends with a slash for consistent path
+            # manipulation
+            if not local_dir.endswith(os.path.sep):
+                local_dir = local_dir + os.path.sep
 
-        # Log sync parameters
-        self.log(f"Local directory: {local_dir}")
-        self.log(f"Remote directory: {remote_dir}")
-        self.log(f"Sync mode: {sync_mode}")
-        self.log(f"Transfer method: {transfer_method}")
-        if extension_filters:
-            if filter_mode == "include":
-                self.log(f"Including extensions: {extension_filters}")
-            else:
-                self.log(f"Excluding extensions: {extension_filters}")
-                
-            if content_only_compare:
-                self.log("Using content-only comparison (slower but more accurate)")
-            else:
-                self.log("Using quick comparison (size and modification time)")
-                
-        # Log excluded folders if any
-        if folder_exclusions:
-            self.log(f"Excluded folders: {', '.join(folder_exclusions)}")
+            # Ensure remote directory path ends with a slash for consistent path
+            # manipulation
+            if not remote_dir.endswith("/"):
+                remote_dir = remote_dir + "/"
 
-        # Log force sync status
-        if force_sync:
-            self.log(
-                "FORCE SYNC ENABLED: All files will be transferred regardless of comparison"
+            # Try to ensure remote directory exists
+            try:
+                sftp_client.stat(remote_dir)
+            except FileNotFoundError:
+                try:
+                    self.log(f"Remote directory does not exist, creating: {remote_dir}")
+                    sftp_client.mkdir(remote_dir)
+                except Exception as e:
+                    self.log(f"Failed to create remote directory: {str(e)}")
+                    return False
+
+            # Check if stop was requested after directory creation
+            if stop_check and stop_check():
+                self.log("Synchronization stopped before file listing")
+                return False
+
+            # Log sync parameters
+            if verbose_logging:
+                self.log(f"Local directory: {local_dir}")
+                self.log(f"Remote directory: {remote_dir}")
+                self.log(f"Sync mode: {sync_mode}")
+                self.log(f"Transfer method: {transfer_method}")
+                if extension_filters:
+                    if filter_mode == "include":
+                        self.log(f"Including extensions: {extension_filters}")
+                    else:
+                        self.log(f"Excluding extensions: {extension_filters}")
+                    
+                    if content_only_compare:
+                        self.log("Using content-only comparison (slower but more accurate)")
+                    else:
+                        self.log("Using quick comparison (size and modification time)")
+                    
+                # Log excluded folders if any
+                if folder_exclusions:
+                    self.log(f"Excluded folders: {', '.join(folder_exclusions)}")
+
+                # Log force sync status
+                if force_sync:
+                    self.log(
+                        "FORCE SYNC ENABLED: All files will be transferred regardless of comparison"
+                    )
+
+                # Log cache usage
+                if use_cache_only:
+                    self.log(
+                        "USING CACHE ONLY: Only checking files in the cache (faster, but new files won't be detected)"
+                    )
+
+            # Create .synccache directory if it doesn't exist
+            cache_dir = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), ".synccache"
             )
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                self.log(f"Cache directory verified/created at: {cache_dir}")
+            except Exception as e:
+                self.log(f"Warning: Could not create cache directory: {str(e)}")
 
-        # Log cache usage
-        if use_cache_only:
-            self.log(
-                "USING CACHE ONLY: Only checking files in the cache (faster, but new files won't be detected)"
-            )
+            # Always calculate hashes during initial scan if not using force_sync
+            # This ensures we have valid metadata for comparison
+            should_calculate_hashes = not force_sync or content_only_compare
 
-        # Create .synccache directory if it doesn't exist
-        cache_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), ".synccache"
-        )
-        try:
-            os.makedirs(cache_dir, exist_ok=True)
-            self.log(f"Cache directory verified/created at: {cache_dir}")
-        except Exception as e:
-            self.log(f"Warning: Could not create cache directory: {str(e)}")
-
-        # Scan directories
-        self.update_status("Scanning local directory...")
-        local_files = self.list_local_files(
-            local_dir, 
-            extension_filters=extension_filters, 
-            filter_mode=filter_mode,
-            folder_exclusions=folder_exclusions,
-            calculate_hashes=content_only_compare,
-            stop_check=stop_check,
-            use_cache_only=use_cache_only,
-        )
-        
-        # Check if stop was requested
-        if stop_check and stop_check():
-            self.log("Synchronization stopped before scanning remote directory")
-            return False
-            
-        self.update_status("Scanning remote directory...")
-        try:
-            remote_files = self.list_remote_files(
-                remote_dir, 
+            # Scan directories
+            self.update_status("Scanning local directory...")
+            local_files = self.list_local_files(
+                local_dir, 
                 extension_filters=extension_filters, 
                 filter_mode=filter_mode,
                 folder_exclusions=folder_exclusions,
-                calculate_hashes=content_only_compare,
+                calculate_hashes=should_calculate_hashes,
                 stop_check=stop_check,
                 use_cache_only=use_cache_only,
             )
+            
+            # Check if stop was requested
+            if stop_check and stop_check():
+                self.log("Synchronization stopped before scanning remote directory")
+                return False
+                
+            self.update_status("Scanning remote directory...")
+            try:
+                remote_files = self.list_remote_files(
+                    remote_dir, 
+                    extension_filters=extension_filters, 
+                    filter_mode=filter_mode,
+                    folder_exclusions=folder_exclusions,
+                    calculate_hashes=should_calculate_hashes,
+                    stop_check=stop_check,
+                    use_cache_only=use_cache_only,
+                )
+            except Exception as e:
+                self.log(f"Error scanning remote directory: {str(e)}")
+                self.log(f"Traceback: {traceback.format_exc()}")
+                return False
+
+            # Log files that exist on remote but not on local
+            remote_only_files = [path for path in remote_files if path not in local_files]
+            if remote_only_files:
+                self.log(
+                    f"Found {len(remote_only_files)} files on remote that don't exist locally:"
+                )
+                for i, path in enumerate(
+                    remote_only_files[:10]
+                ):  # Show just first 10 to avoid log spam
+                    self.log(f"  {i+1}. {path}")
+                if len(remote_only_files) > 10:
+                    self.log(f"  ... plus {len(remote_only_files) - 10} more")
+            else:
+                self.log("No remote-only files found.")
+
+            # Check if stop was requested
+            if stop_check and stop_check():
+                self.log("Synchronization stopped after scanning directories")
+                return False
+            
+            # Perform sync based on direction
+            sync_success = True
+            
+            # Local to remote sync if needed
+            if sync_mode in ["both", "to_remote"]:
+                to_remote_success = self._sync_local_to_remote(
+                    local_files,
+                    remote_files,
+                    local_dir,
+                    remote_dir,
+                    force_sync=force_sync,
+                    content_only_compare=content_only_compare,
+                    stop_check=stop_check,
+                )
+                sync_success = sync_success and to_remote_success
+                    
+            # Remote to local sync if needed
+            if sync_mode in ["both", "to_local"]:
+                to_local_success = self._sync_remote_to_local(
+                    remote_files,
+                    local_files,
+                    remote_dir,
+                    local_dir,
+                    force_sync=force_sync,
+                    content_only_compare=content_only_compare,
+                    stop_check=stop_check,
+                )
+                sync_success = sync_success and to_local_success
+            
+            # Final stop check
+            if stop_check and stop_check():
+                return False
+            
+            # Save metadata cache if sync was successful
+            if sync_success:
+                self.save_local_metadata(local_files)
+                self.save_remote_metadata(remote_files)
+            
+            self.update_status("Synchronization completed")
+            self.update_progress(100)
+                
+            return True
+            
         except Exception as e:
-            self.log(f"Error scanning remote directory: {str(e)}")
+            self.log(f"Error during sync: {str(e)}")
             self.log(f"Traceback: {traceback.format_exc()}")
             return False
-
-        # Log files that exist on remote but not on local
-        remote_only_files = [path for path in remote_files if path not in local_files]
-        if remote_only_files:
-            self.log(
-                f"Found {len(remote_only_files)} files on remote that don't exist locally:"
-            )
-            for i, path in enumerate(
-                remote_only_files[:10]
-            ):  # Show just first 10 to avoid log spam
-                self.log(f"  {i+1}. {path}")
-            if len(remote_only_files) > 10:
-                self.log(f"  ... plus {len(remote_only_files) - 10} more")
-        else:
-            self.log("No remote-only files found.")
-
-        # Check if stop was requested
-        if stop_check and stop_check():
-            self.log("Synchronization stopped after scanning directories")
-            return False
-        
-        # Perform sync based on direction
-        sync_success = True
-        
-        # Local to remote sync if needed
-        if sync_mode in ["both", "to_remote"]:
-            to_remote_success = self._sync_local_to_remote(
-                local_files,
-                remote_files,
-                local_dir,
-                remote_dir,
-                force_sync=force_sync,
-                content_only_compare=content_only_compare,
-                stop_check=stop_check,
-            )
-            sync_success = sync_success and to_remote_success
-                
-        # Remote to local sync if needed
-        if sync_mode in ["both", "to_local"]:
-            to_local_success = self._sync_remote_to_local(
-                remote_files,
-                local_files,
-                remote_dir,
-                local_dir,
-                force_sync=force_sync,
-                content_only_compare=content_only_compare,
-                stop_check=stop_check,
-            )
-            sync_success = sync_success and to_local_success
-        
-        # Final stop check
-        if stop_check and stop_check():
-            return False
-        
-        # Save metadata cache if sync was successful
-        if sync_success:
-            self.save_local_metadata(self.local_metadata)
-            self.save_remote_metadata(self.remote_metadata)
-        
-        self.update_status("Synchronization completed")
-        self.update_progress(100)
-            
-        return True
     
     def sync_directories(
         self,
@@ -1102,12 +1207,12 @@ class FolderSync:
                 total_to_sync += 1
                 continue
 
-            # Compare files
+            # Compare files using _files_differ method
             if self._files_differ(
                 local_info,
                 remote_info,
                 content_only_compare=content_only_compare,
-                is_remote_second=True,
+                force_sync=force_sync,
             ):
                 self.log(f"DEBUG: Files differ - will sync {rel_path}")
                 need_sync.append(rel_path)
@@ -1130,7 +1235,7 @@ class FolderSync:
                 break
 
             local_info = local_files[rel_path]
-            local_path = local_info["path"]
+            local_path = os.path.join(local_dir, local_info["path"])
             remote_path = os.path.join(remote_dir, rel_path).replace("\\", "/")
 
             try:
@@ -1150,6 +1255,16 @@ class FolderSync:
                     current_directory=os.path.dirname(rel_path) or "/"
                 )
                 self.sftp.put(local_path, remote_path)
+                
+                # Update remote metadata after successful transfer
+                remote_stat = self.sftp.stat(remote_path)
+                remote_files[rel_path] = {
+                    "path": rel_path,
+                    "size": remote_stat.st_size,
+                    "mtime": remote_stat.st_mtime,
+                    "hash": local_info.get("hash")  # Use local hash since content is identical
+                }
+                
                 files_synced += 1
                 
                 if files_synced % 10 == 0:
@@ -1209,12 +1324,12 @@ class FolderSync:
                 total_to_sync += 1
                 continue
 
-            # Compare files
+            # Compare files using _files_differ method
             if self._files_differ(
                 remote_info,
                 local_info,
                 content_only_compare=content_only_compare,
-                is_remote_second=False,
+                force_sync=force_sync,
             ):
                 self.log(f"DEBUG: Files differ - will sync {rel_path}")
                 need_sync.append(rel_path)
@@ -1237,8 +1352,8 @@ class FolderSync:
                 break
 
             remote_info = remote_files[rel_path]
-            remote_path = remote_info["path"]
-            local_path = os.path.join(local_dir, rel_path).replace("\\", "/")
+            remote_path = os.path.join(remote_dir, remote_info["path"]).replace("\\", "/")
+            local_path = os.path.join(local_dir, rel_path)
 
             try:
                 # Ensure local directory exists
@@ -1254,6 +1369,16 @@ class FolderSync:
                     current_directory=os.path.dirname(rel_path) or "/"
                 )
                 self.sftp.get(remote_path, local_path)
+                
+                # Update local metadata after successful transfer
+                local_stat = os.stat(local_path)
+                local_files[rel_path] = {
+                    "path": rel_path,
+                    "size": local_stat.st_size,
+                    "mtime": local_stat.st_mtime,
+                    "hash": remote_info.get("hash")  # Use remote hash since content is identical
+                }
+                
                 files_synced += 1
                 
                 if files_synced % 10 == 0:
@@ -1288,36 +1413,41 @@ class FolderSync:
             return True
 
         # Log comparison parameters for debugging
-        self.log(f"Comparing files:")
-        self.log(f"File 1: size={file1_info['size']}, mtime={file1_info['mtime']}, hash={file1_info.get('hash')}")
-        self.log(f"File 2: size={file2_info['size']}, mtime={file2_info['mtime']}, hash={file2_info.get('hash')}")
+        self.log(f"DEBUG: Comparing files:")
+        self.log(f"DEBUG: File 1: size={file1_info['size']}, mtime={file1_info['mtime']}, hash={file1_info.get('hash')}")
+        self.log(f"DEBUG: File 2: size={file2_info['size']}, mtime={file2_info['mtime']}, hash={file2_info.get('hash')}")
         
-        if content_only_compare:
-            # For content-only comparison, we need valid hashes
-            if file1_info.get("hash") is None or file2_info.get("hash") is None:
-                # If either hash is missing, fall back to size/time comparison
-                self.log("Missing hash(es), falling back to size/time comparison")
-                size_differs = abs(file1_info["size"] - file2_info["size"]) >= 2
-                time_differs = abs(file1_info["mtime"] - file2_info["mtime"]) >= 2
-                return size_differs or time_differs
-            
-            # Compare hashes
-            files_differ = file1_info["hash"] != file2_info["hash"]
-            self.log(f"Hash comparison result: {'different' if files_differ else 'same'}")
+        # First check if we have valid hashes for both files
+        hash1 = file1_info.get("hash")
+        hash2 = file2_info.get("hash")
+        
+        if hash1 is not None and hash2 is not None:
+            # If we have hashes, use them for comparison regardless of content_only_compare
+            # This is the most accurate way to compare files
+            files_differ = hash1 != hash2
+            self.log(f"DEBUG: Using hash comparison: {'different' if files_differ else 'same'}")
             return files_differ
             
-        else:
-            # Quick comparison using size and mtime
-            # Allow for small floating point differences in mtime (2 seconds)
-            # and small size differences (2 bytes) to account for system variations
-            size_differs = abs(file1_info["size"] - file2_info["size"]) >= 2
-            time_differs = abs(file1_info["mtime"] - file2_info["mtime"]) >= 2
-            
-            self.log(f"Size difference: {abs(file1_info['size'] - file2_info['size'])} bytes")
-            self.log(f"Time difference: {abs(file1_info['mtime'] - file2_info['mtime'])} seconds")
-            
-            # If either size or time differs significantly, files are considered different
+        # If we don't have hashes, fall back to size and time comparison
+        # Allow for small floating point differences in mtime (2 seconds)
+        # and small size differences (2 bytes) to account for system variations
+        size_differs = abs(file1_info["size"] - file2_info["size"]) >= 2
+        time_differs = abs(file1_info["mtime"] - file2_info["mtime"]) >= 2
+        
+        self.log(f"DEBUG: Size difference: {abs(file1_info['size'] - file2_info['size'])} bytes")
+        self.log(f"DEBUG: Time difference: {abs(file1_info['mtime'] - file2_info['mtime'])} seconds")
+        
+        # If content_only_compare is True and we don't have hashes, we should calculate them
+        if content_only_compare and not (hash1 and hash2):
+            self.log("DEBUG: Content-only comparison requested but missing hashes")
+            # We'll be more strict with size/time comparison in this case
             return size_differs or time_differs
+            
+        # For normal comparison, if either size or time differs significantly, 
+        # files are considered different
+        files_differ = size_differs or time_differs
+        self.log(f"DEBUG: Using size/time comparison: {'different' if files_differ else 'same'}")
+        return files_differ
 
     def _create_remote_dirs(self, sftp, path):
         """
@@ -2221,6 +2351,9 @@ if __name__ == "__main__":
     def sftp_walk(self, remote_dir):
         """Recursively walk through remote directory structure using SFTP.
         Similar to os.walk(), yields (root, dirs, files) for each directory.
+        
+        Args:
+            remote_dir: Remote directory path to walk through
         """
         # Get the directory listing
         try:
@@ -2239,11 +2372,9 @@ if __name__ == "__main__":
         for item in items:
             if stat.S_ISDIR(item.st_mode):
                 # It's a directory
-                item.filename = item.filename
                 dirs.append(item.filename)
             else:
                 # It's a file
-                item.filename = item.filename
                 files.append(item.filename)
 
         # First yield the current directory's info
