@@ -781,9 +781,23 @@ class FolderSync:
                     rel_root = "/"
                 self.update_status(f"Scanning remote directory: {rel_root}")
 
-                # Apply folder exclusions
+                # Apply folder exclusions - check full relative path
                 if folder_exclusions:
-                    dirs[:] = [d for d in dirs if d not in folder_exclusions]
+                    dirs_to_remove = []
+                    for i, d in enumerate(dirs):
+                        # Get the full relative path of this directory
+                        dir_rel_path = os.path.normpath(os.path.join(rel_root, d)).replace("\\", "/")
+                        # Check if this directory or any of its parents should be excluded
+                        for exclusion in folder_exclusions:
+                            exclusion = os.path.normpath(exclusion).replace("\\", "/")
+                            if dir_rel_path == exclusion or dir_rel_path.startswith(exclusion + "/"):
+                                self.log(f"DEBUG: Excluding directory: {dir_rel_path} (matches exclusion {exclusion})")
+                                dirs_to_remove.append(i)
+                                break
+                    
+                    # Remove excluded directories in reverse order to maintain indices
+                    for i in sorted(dirs_to_remove, reverse=True):
+                        del dirs[i]
 
                 for file in files:
                     if stop_check and stop_check():
@@ -791,6 +805,19 @@ class FolderSync:
 
                     full_path = os.path.join(root, file).replace("\\", "/")
                     rel_path = os.path.relpath(full_path, remote_dir).replace("\\", "/")
+                    
+                    # Check if file is in an excluded directory
+                    if folder_exclusions:
+                        file_dir = os.path.dirname(rel_path).replace("\\", "/")
+                        skip_file = False
+                        for exclusion in folder_exclusions:
+                            exclusion = os.path.normpath(exclusion).replace("\\", "/")
+                            if file_dir == exclusion or file_dir.startswith(exclusion + "/"):
+                                self.log(f"DEBUG: Skipping file in excluded directory: {rel_path}")
+                                skip_file = True
+                                break
+                        if skip_file:
+                            continue
 
                     # Check ignore patterns
                     if ignore_patterns and any(fnmatch(rel_path, p) for p in ignore_patterns):
